@@ -1,0 +1,35 @@
+2025-07-23 16:56:32,656 - INFO - ✅ Logging initialized di FastAPI
+INFO:     Started server process [33705]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+INFO:     127.0.0.1:57690 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38882 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38884 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:46584 - "GET /sample-datasets HTTP/1.1" 200 OK
+2025-07-23 16:57:05,872 - INFO - dataset_key
+2025-07-23 16:57:05,872 - INFO - manufacturing_production
+2025-07-23 16:57:05,872 - INFO - SAMPLE_DATASETS
+2025-07-23 16:57:05,872 - INFO - ['ecommerce_sales', 'customer_transactions', 'manufacturing_production', 'financial_trading', 'healthcare_admissions']
+2025-07-23 16:57:05,873 - INFO - data_store session created
+2025-07-23 16:57:05,873 - INFO - sample_manufacturing_production_20250723_165705
+2025-07-23 16:57:05,873 - INFO - df shape
+2025-07-23 16:57:05,873 - INFO - (26281, 6)
+INFO:     127.0.0.1:46588 - "POST /load-sample/manufacturing_production HTTP/1.1" 200 OK
+INFO:     127.0.0.1:46602 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57966 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54362 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54376 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54380 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54388 - "POST /aggregate-data HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54402 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54418 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54422 - "POST /analyze HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54428 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36608 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36622 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36632 - "POST /aggregate-data HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36646 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36660 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36676 - "POST /analyze HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36686 - "GET /sample-datasets HTTP/1.1" 200 OK
