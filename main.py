@@ -39,7 +39,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
+logging.info("✅ Logging initialized di FastAPI")
 # In-memory storage
 data_store: Dict[str, pd.DataFrame] = {}
 analysis_cache: Dict[str, Any] = {}
@@ -62,6 +62,8 @@ class AnalysisRequest(BaseModel):
     session_id: str
     module: str
     parameters: Dict
+
+logging.info("✅ Logging initialized di FastAPI")
 
 # Helper function for datetime parsing
 def parse_datetime_flexible(date_series):
@@ -102,6 +104,7 @@ def parse_datetime_flexible(date_series):
 
 # Generate realistic manufacturing data
 def generate_manufacturing_data():
+    logging.info("✅ generate manufacturing data")
     np.random.seed(42)
     dates = pd.date_range('2022-01-01', '2024-12-31', freq='H')
     
@@ -143,6 +146,7 @@ def generate_manufacturing_data():
 
 # Generate realistic financial trading data
 def generate_trading_data():
+    logging.info("✅ generate trading data")
     np.random.seed(123)
     
     # Generate minute-by-minute trading data for 6 months
@@ -196,6 +200,7 @@ def generate_trading_data():
 
 # Generate realistic healthcare patient data
 def generate_healthcare_data():
+    logging.info("✅ generate healthcare data")
     np.random.seed(456)
     
     # Generate patient admission data over 2 years
@@ -252,6 +257,240 @@ def generate_healthcare_data():
     
     return pd.DataFrame(data)
 
+# Generate realistic airline flight data with upward trend
+def generate_flight_data():
+    logging.info("✅ generate flight data")
+    np.random.seed(789)
+    
+    # Generate daily flight data over 3 years with clear upward trend
+    start_date = datetime(2022, 1, 1)
+    end_date = datetime(2024, 12, 31)
+    dates = pd.date_range(start_date, end_date, freq='D')
+    
+    data = []
+    base_passengers = 15000  # Starting base passengers per day
+    
+    airlines = ['Garuda Indonesia']
+    aircraft_types = ['Boeing 737']
+    routes = ['CGK-DPS', 'CGK-SBY']
+
+    logging.info("creating data")
+    
+    for i, date in enumerate(dates):
+        # logging.info(date)
+        # Strong upward trend over 3 years (recovery from pandemic + growth)
+        trend_multiplier = 1 + (i / len(dates)) * 0.8  # 80% growth over period
+        
+        # Weekly seasonality (weekends higher for leisure travel)
+        if date.weekday() in [4, 5, 6]:  # Fri, Sat, Sun
+            weekly_multiplier = 1.4
+        else:
+            weekly_multiplier = 1.0
+        
+        # Strong seasonal patterns
+        month = date.month
+        if month in [6, 7, 12]:  # School holidays & year-end
+            seasonal_multiplier = 1.6
+        elif month in [1, 2]:  # Chinese New Year period
+            seasonal_multiplier = 1.3
+        elif month in [4, 5]:  # Eid period
+            seasonal_multiplier = 1.2
+        elif month in [3, 9, 10]:  # Moderate seasons
+            seasonal_multiplier = 1.1
+        else:  # Low season
+            seasonal_multiplier = 0.8
+        
+        # Holiday boost (simulate specific holiday periods)
+        holiday_boost = 1.0
+        if (date.month == 12 and date.day >= 20) or (date.month == 1 and date.day <= 5):
+            holiday_boost = 1.8  # Year-end holidays
+        elif date.month == 7 and 15 <= date.day <= 31:
+            holiday_boost = 1.5  # School holidays
+        
+        # Calculate daily passengers
+        daily_passengers = base_passengers * trend_multiplier * weekly_multiplier * seasonal_multiplier * holiday_boost
+        daily_passengers += np.random.normal(0, daily_passengers * 0.1)  # Add 10% noise
+        daily_passengers = max(5000, int(daily_passengers))  # Minimum 5000 passengers
+        
+        # Generate individual flights for the day
+        estimated_flights = max(30, int(daily_passengers / 180))  # ~180 passengers per flight average
+
+        
+        for flight_num in range(estimated_flights):
+            departure_hour = np.random.choice(range(5, 23), p=[0.02, 0.03, 0.08, 0.12, 0.15, 0.12, 
+                                                   0.10, 0.08, 0.06, 0.05, 0.04, 0.03, 
+                                                   0.02, 0.02, 0.02, 0.02, 0.02, 0.02])
+            departure_minute = np.random.randint(0, 60, size=1)[0]
+            
+            airline = np.random.choice(airlines, p=[1])
+            aircraft = np.random.choice(aircraft_types, p=[1])
+            route = np.random.choice(routes, p=[0.5,0.5])
+            
+            # Passengers per flight varies by aircraft type
+            if aircraft == 'Boeing 777':
+                max_capacity = 350
+            elif aircraft == 'Airbus A330':
+                max_capacity = 280
+            elif aircraft == 'Boeing 737':
+                max_capacity = 189
+            else:  # Airbus A320
+                max_capacity = 180
+            
+            # Load factor varies by season and day
+            base_load_factor = 0.75
+            if date.weekday() >= 5:  # Weekend
+                load_factor = min(0.95, base_load_factor + 0.15)
+            else:
+                load_factor = base_load_factor
+            
+            load_factor *= seasonal_multiplier / 1.2  # Adjust for seasonality
+            load_factor = min(0.98, max(0.4, load_factor))  # Keep realistic bounds
+            
+            passengers = int(max_capacity * load_factor)
+            revenue_per_passenger = np.random.normal(750000, 150000)  # IDR
+            revenue_per_passenger = max(300000, revenue_per_passenger)
+            
+            fuel_cost = np.random.normal(25000000, 5000000)  # IDR per flight
+            fuel_cost = max(15000000, fuel_cost)
+            
+            departure_time = datetime.combine(date.date(), datetime.min.time()).replace(
+                hour=departure_hour,
+                minute=departure_minute
+            )
+            
+            data.append({
+                'flight_date': date.strftime('%Y-%m-%d'),
+                'departure_time': departure_time.strftime('%H:%M'),
+                'airline': airline,
+                'aircraft_type': aircraft,
+                'route': route,
+                'passengers_count': passengers,
+                'max_capacity': max_capacity,
+                'load_factor_percent': round(load_factor * 100, 1),
+                'revenue_idr': int(passengers * revenue_per_passenger),
+                'fuel_cost_idr': int(fuel_cost),
+                'profit_idr': int(passengers * revenue_per_passenger - fuel_cost),
+                'flight_duration_hours': round(np.random.uniform(1.0, 2.5), 1),
+                'delay_minutes': max(0, int(np.random.exponential(15)))
+            })
+
+    logging.info("created data")
+    
+    return pd.DataFrame(data)
+
+# Generate school book demand data with very strong seasonality
+def generate_school_book_data():
+    logging.info("✅ generate school book data")
+    np.random.seed(321)
+    
+    # Generate daily book sales data over 3 years
+    start_date = datetime(2022, 1, 1)
+    end_date = datetime(2024, 12, 31)
+    dates = pd.date_range(start_date, end_date, freq='D')
+    
+    data = []
+    base_sales = 500  # Base daily sales
+    
+    book_categories = ['Elementary Textbooks', 'Middle School Books', 'High School Books', 
+                      'University Books', 'Activity Books', 'Reference Books']
+    subjects = ['Mathematics', 'Science', 'Indonesian Language', 'English', 'Social Studies', 
+               'Religion', 'Arts', 'Physical Education']
+    publishers = ['Erlangga', 'Tiga Serangkai', 'Yudhistira', 'Esis', 'Grafindo', 'Bumi Aksara']
+    
+    for date in enumerate(dates):
+        date = date[1]  # Get actual date from enumerate
+        month = date.month
+        
+        # VERY STRONG seasonal patterns for school books
+        if month == 6:  # June - New school year preparation (STRONGEST PEAK)
+            seasonal_multiplier = 8.0  # 800% increase!
+        elif month == 7:  # July - School year starts (MAJOR PEAK)
+            seasonal_multiplier = 12.0  # 1200% increase!
+        elif month == 12:  # December - Second semester prep
+            seasonal_multiplier = 4.0  # 400% increase
+        elif month == 1:  # January - Second semester starts
+            seasonal_multiplier = 5.0  # 500% increase
+        elif month in [5, 11]:  # Pre-season months
+            seasonal_multiplier = 2.0  # 200% increase
+        elif month in [2, 8]:  # Post-peak months
+            seasonal_multiplier = 1.5  # 150% increase
+        elif month in [3, 4, 9, 10]:  # Regular school months
+            seasonal_multiplier = 0.8  # 80% of base
+        else:
+            seasonal_multiplier = 0.3  # Very low during holidays
+        
+        # Weekly patterns (weekends lower except during peak season)
+        if date.weekday() >= 5:  # Weekend
+            if seasonal_multiplier > 3:  # During peak season, weekends also busy
+                weekly_multiplier = 0.8
+            else:
+                weekly_multiplier = 0.3
+        else:
+            weekly_multiplier = 1.0
+        
+        # Year-over-year growth (education sector growing)
+        year_multiplier = 1 + (date.year - 2022) * 0.12  # 12% annual growth
+        
+        # Calculate daily sales
+        daily_sales = base_sales * seasonal_multiplier * weekly_multiplier * year_multiplier
+        daily_sales += np.random.normal(0, daily_sales * 0.15)  # Add noise
+        daily_sales = max(10, int(daily_sales))  # Minimum 10 books per day
+        
+        # Generate individual sales records
+        for sale_id in range(min(daily_sales, 1000)):  # Cap at 1000 records per day for performance
+            category = np.random.choice(book_categories, p=[0.3, 0.25, 0.25, 0.1, 0.05, 0.05])
+            subject = np.random.choice(subjects, p=[0.25, 0.2, 0.15, 0.1, 0.1, 0.05, 0.1, 0.05])
+            publisher = np.random.choice(publishers, p=[0.25, 0.15, 0.15, 0.15, 0.15, 0.15])
+            
+            # Price varies by category and publisher
+            if category == 'University Books':
+                base_price = 180000
+            elif category in ['High School Books', 'Reference Books']:
+                base_price = 95000
+            elif category == 'Middle School Books':
+                base_price = 75000
+            else:
+                base_price = 45000
+            
+            # Publisher premium
+            publisher_multiplier = {'Erlangga': 1.2, 'Tiga Serangkai': 1.0, 'Yudhistira': 1.1,
+                                  'Esis': 1.0, 'Grafindo': 0.9, 'Bumi Aksara': 0.95}[publisher]
+            
+            price = int(base_price * publisher_multiplier * np.random.uniform(0.8, 1.3))
+            quantity = np.random.choice([1, 2, 3, 5, 10], p=[0.4, 0.3, 0.15, 0.1, 0.05])
+            
+            # During peak season, bulk purchases more common
+            if seasonal_multiplier > 3:
+                quantity *= np.random.choice([1, 2, 3], p=[0.5, 0.3, 0.2])
+            
+            # Customer type affects purchase patterns
+            customer_type = np.random.choice(['Individual Parent', 'School Bulk', 'Teacher', 'Student'], 
+                                           p=[0.5, 0.2, 0.2, 0.1])
+            
+            if customer_type == 'School Bulk':
+                quantity *= np.random.randint(5, 25)
+                price *= 0.85  # Bulk discount
+            
+            sale_time = date.replace(hour=np.random.randint(8, 20), 
+                                   minute=np.random.randint(0, 60))
+            
+            data.append({
+                'sale_date': date.strftime('%d/%m/%Y'),  # DD/MM/YYYY format
+                'sale_time': sale_time.strftime('%H:%M'),
+                'book_category': category,
+                'subject': subject,
+                'publisher': publisher,
+                'unit_price_idr': price,
+                'quantity_sold': quantity,
+                'total_revenue_idr': price * quantity,
+                'customer_type': customer_type,
+                'school_grade_level': np.random.choice(['K-6', '7-9', '10-12', 'University'], 
+                                                     p=[0.35, 0.25, 0.25, 0.15]),
+                'is_new_curriculum': np.random.choice([True, False], p=[0.7, 0.3])
+            })
+    
+    return pd.DataFrame(data)
+
 # Enhanced sample datasets with more realistic data
 SAMPLE_DATASETS = {
     "ecommerce_sales": {
@@ -290,9 +529,20 @@ SAMPLE_DATASETS = {
         "name": "Healthcare Patient Admissions",
         "description": "Hospital patient admission records with department and cost data (MM-DD-YYYY format)", 
         "data": generate_healthcare_data()
+    },
+    "airline_flights": {
+        "name": "Airline Flight Operations", 
+        "description": "Daily flight data showing strong upward trend in passenger traffic with seasonal patterns (YYYY-MM-DD format)",
+        "data": generate_flight_data()
+    },
+    "school_book_sales": {
+        "name": "School Book Sales Demand",
+        "description": "Educational book sales with extremely strong seasonality around school seasons (DD/MM/YYYY format)", 
+        "data": generate_school_book_data()
     }
 }
 
+logging.info("✅ Logging initialized di FastAPI")
 @app.get("/")
 def read_root():
     return {"message": "Data Analytics", "version": "1.0.0"}
@@ -308,7 +558,7 @@ def get_sample_datasets():
         }
         for key, value in SAMPLE_DATASETS.items()
     }
-
+logging.info("✅ Logging initialized di FastAPI")
 @app.post("/load-sample/{dataset_key}")
 def load_sample_dataset(dataset_key: str):
 
@@ -335,7 +585,7 @@ def load_sample_dataset(dataset_key: str):
         session_id=session_id,
         columns=df.columns.tolist(),
         shape=df.shape,
-        sample_data=df.head(10).to_dict('records')  # Show more sample data
+        sample_data=df.to_dict('records')  # Show more sample data
     )
 
 @app.post("/upload-data")
@@ -441,6 +691,10 @@ def analyze_data(request: AnalysisRequest):
             return analyze_manufacturing(df, request.parameters)
         elif request.module == "healthcare":
             return analyze_healthcare(df, request.parameters)
+        elif request.module == "airline":
+            return analyze_airline(df, request.parameters)
+        elif request.module == "education":
+            return analyze_education(df, request.parameters)
         else:
             raise HTTPException(status_code=400, detail="Unsupported module")
     
@@ -650,6 +904,145 @@ def analyze_healthcare(df: pd.DataFrame, params: Dict) -> Dict:
         },
         "plot": plot_json,
         "insights": insights
+    }
+
+def analyze_airline(df: pd.DataFrame, params: Dict) -> Dict:
+    """Airline-specific analysis with trend and seasonality"""
+    date_col = params.get('date_col', 'flight_date')
+    passengers_col = params.get('passengers_col', 'passengers_count')
+    revenue_col = params.get('revenue_col', 'revenue_idr')
+    
+    # Parse datetime
+    df[date_col] = parse_datetime_flexible(df[date_col])
+    df = df.dropna(subset=[date_col])
+    df = df.sort_values(date_col)
+    
+    # Daily aggregation for trend analysis
+    daily_stats = df.groupby(date_col).agg({
+        passengers_col: 'sum',
+        revenue_col: 'sum',
+        'load_factor_percent': 'mean'
+    }).reset_index()
+    
+    # Calculate growth trend
+    first_month = daily_stats.head(30)[passengers_col].mean()
+    last_month = daily_stats.tail(30)[passengers_col].mean()
+    growth_rate = ((last_month - first_month) / first_month) * 100 if first_month > 0 else 0
+    
+    # Seasonality analysis
+    df['month'] = df[date_col].dt.month
+    monthly_passengers = df.groupby('month')[passengers_col].sum()
+    peak_month = monthly_passengers.idxmax()
+    seasonality_strength = float(monthly_passengers.std() / monthly_passengers.mean())
+    
+    # KPIs
+    total_passengers = df[passengers_col].sum()
+    total_revenue = df[revenue_col].sum()
+    avg_load_factor = df['load_factor_percent'].mean()
+    total_flights = len(df)
+    
+    # Create trend plot
+    fig = px.line(daily_stats, x=date_col, y=passengers_col, 
+                  title="Daily Passenger Traffic Trend")
+    plot_json = fig.to_json()
+    
+    # Route analysis
+    if 'route' in df.columns:
+        top_route = df.groupby('route')[passengers_col].sum().idxmax()
+    
+    insights = [
+        f"Total passengers transported: {total_passengers:,}",
+        f"Strong upward trend: {growth_rate:.1f}% growth",
+        f"Peak travel month: {['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][peak_month]}",
+        f"Average load factor: {avg_load_factor:.1f}%",
+        f"Most popular route: {top_route if 'route' in df.columns else 'N/A'}"
+    ]
+    
+    return {
+        "module": "airline",
+        "kpis": {
+            "total_passengers": int(total_passengers),
+            "total_revenue": int(total_revenue),
+            "avg_load_factor": float(avg_load_factor),
+            "total_flights": total_flights,
+            "growth_rate": float(growth_rate)
+        },
+        "plot": plot_json,
+        "insights": insights,
+        "seasonality_strength": seasonality_strength
+    }
+
+def analyze_education(df: pd.DataFrame, params: Dict) -> Dict:
+    """Education/School book sales analysis with extreme seasonality"""
+    date_col = params.get('date_col', 'sale_date')
+    revenue_col = params.get('revenue_col', 'total_revenue_idr')
+    quantity_col = params.get('quantity_col', 'quantity_sold')
+    
+    # Parse datetime
+    df[date_col] = parse_datetime_flexible(df[date_col])
+    df = df.dropna(subset=[date_col])
+    df = df.sort_values(date_col)
+    
+    # Daily aggregation
+    daily_stats = df.groupby(date_col).agg({
+        quantity_col: 'sum',
+        revenue_col: 'sum'
+    }).reset_index()
+    
+    # Extreme seasonality analysis
+    df['month'] = df[date_col].dt.month
+    monthly_sales = df.groupby('month')[quantity_col].sum()
+    peak_month = monthly_sales.idxmax()
+    lowest_month = monthly_sales.idxmin()
+    
+    # Calculate peak vs low season ratio
+    peak_ratio = monthly_sales.max() / monthly_sales.min() if monthly_sales.min() > 0 else 0
+    seasonality_strength = float(monthly_sales.std() / monthly_sales.mean())
+    
+    # School season identification
+    school_prep_months = [6, 7]  # June-July peak
+    semester_months = [1, 12]    # Dec-Jan secondary peak
+    
+    school_season_sales = df[df['month'].isin(school_prep_months + semester_months)][quantity_col].sum()
+    total_sales = df[quantity_col].sum()
+    school_season_percentage = (school_season_sales / total_sales) * 100 if total_sales > 0 else 0
+    
+    # Category analysis
+    if 'book_category' in df.columns:
+        top_category = df.groupby('book_category')[quantity_col].sum().idxmax()
+        category_distribution = df.groupby('book_category')[quantity_col].sum().to_dict()
+    
+    # Create seasonality plot
+    fig = px.line(daily_stats.head(1000), x=date_col, y=quantity_col, 
+                  title="Book Sales Seasonality (First 1000 days)")
+    plot_json = fig.to_json()
+    
+    # KPIs
+    total_books_sold = df[quantity_col].sum()
+    total_revenue = df[revenue_col].sum()
+    avg_daily_sales = daily_stats[quantity_col].mean()
+    
+    insights = [
+        f"EXTREME seasonality detected: {peak_ratio:.1f}x difference between peak and low months",
+        f"Peak month: {['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][peak_month]} (School preparation)",
+        f"School seasons account for {school_season_percentage:.1f}% of annual sales",
+        f"Total books sold: {total_books_sold:,}",
+        f"Most popular category: {top_category if 'book_category' in df.columns else 'N/A'}"
+    ]
+    
+    return {
+        "module": "education",
+        "kpis": {
+            "total_books_sold": int(total_books_sold),
+            "total_revenue": int(total_revenue),
+            "avg_daily_sales": float(avg_daily_sales),
+            "peak_ratio": float(peak_ratio),
+            "school_season_percentage": float(school_season_percentage)
+        },
+        "plot": plot_json,
+        "insights": insights,
+        "seasonality_strength": seasonality_strength,
+        "category_distribution": category_distribution if 'book_category' in df.columns else {}
     }
 
 @app.get("/session/{session_id}/data")
