@@ -57,6 +57,7 @@ class AggregationRequest(BaseModel):
     value_col: str
     agg_method: str
     freq: str
+    category_col: Optional[str] = None  # Tambahan untuk multi time series
 
 class AnalysisRequest(BaseModel):
     session_id: str
@@ -64,6 +65,24 @@ class AnalysisRequest(BaseModel):
     parameters: Dict
 
 logging.info("✅ Logging initialized di FastAPI")
+
+def clean_float(val):
+    if isinstance(val, float):
+        if np.isnan(val) or np.isinf(val):
+            return 0.0
+    return float(val)
+
+def sanitize_for_json(obj):
+    if isinstance(obj, float):
+        if np.isnan(obj) or np.isinf(obj):
+            return 0.0
+        return obj
+    elif isinstance(obj, dict):
+        return {k: sanitize_for_json(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [sanitize_for_json(i) for i in obj]
+    else:
+        return obj
 
 # Helper function for datetime parsing
 def parse_datetime_flexible(date_series):
@@ -644,22 +663,42 @@ def aggregate_data(request: AggregationRequest):
         # Set datetime as index and resample
         df_agg = df.set_index(request.datetime_col)
         
-        if request.agg_method == 'sum':
-            result = df_agg[request.value_col].resample(request.freq).sum()
-        elif request.agg_method == 'mean':
-            result = df_agg[request.value_col].resample(request.freq).mean()
-        elif request.agg_method == 'count':
-            result = df_agg[request.value_col].resample(request.freq).count()
-        elif request.agg_method == 'median':
-            result = df_agg[request.value_col].resample(request.freq).median()
+        # Multi time series support with category
+        if request.category_col and request.category_col in df.columns:
+            # Group by category and resample
+            if request.agg_method == 'sum':
+                result = df_agg.groupby(request.category_col)[request.value_col].resample(request.freq).sum()
+            elif request.agg_method == 'mean':
+                result = df_agg.groupby(request.category_col)[request.value_col].resample(request.freq).mean()
+            elif request.agg_method == 'count':
+                result = df_agg.groupby(request.category_col)[request.value_col].resample(request.freq).count()
+            elif request.agg_method == 'median':
+                result = df_agg.groupby(request.category_col)[request.value_col].resample(request.freq).median()
+            else:
+                raise ValueError("Unsupported aggregation method")
+            
+            # Reset index and create proper dataframe
+            result_df = result.reset_index()
+            result_df.columns = ['category', 'date', 'value']
+            agg_df = result_df
         else:
-            raise ValueError("Unsupported aggregation method")
-        
-        # Create new dataframe
-        agg_df = pd.DataFrame({
-            'date': result.index,
-            'value': result.values
-        }).reset_index(drop=True)
+            # Single time series (original logic)
+            if request.agg_method == 'sum':
+                result = df_agg[request.value_col].resample(request.freq).sum()
+            elif request.agg_method == 'mean':
+                result = df_agg[request.value_col].resample(request.freq).mean()
+            elif request.agg_method == 'count':
+                result = df_agg[request.value_col].resample(request.freq).count()
+            elif request.agg_method == 'median':
+                result = df_agg[request.value_col].resample(request.freq).median()
+            else:
+                raise ValueError("Unsupported aggregation method")
+            
+            # Create new dataframe
+            agg_df = pd.DataFrame({
+                'date': result.index,
+                'value': result.values
+            }).reset_index(drop=True)
         
         # Store aggregated data
         agg_session_id = f"{request.session_id}_agg"
@@ -668,7 +707,8 @@ def aggregate_data(request: AggregationRequest):
         return {
             "session_id": agg_session_id,
             "shape": agg_df.shape,
-            "data": agg_df.to_dict('records')[:50]  # Return first 50 rows
+            "data": agg_df.to_dict('records')[:50],  # Return first 50 rows
+            "has_category": request.category_col is not None
         }
     
     except Exception as e:
@@ -687,14 +727,6 @@ def analyze_data(request: AnalysisRequest):
             return analyze_time_series(df, request.parameters)
         elif request.module == "customer":
             return analyze_customer(df, request.parameters)
-        elif request.module == "manufacturing":
-            return analyze_manufacturing(df, request.parameters)
-        elif request.module == "healthcare":
-            return analyze_healthcare(df, request.parameters)
-        elif request.module == "airline":
-            return analyze_airline(df, request.parameters)
-        elif request.module == "education":
-            return analyze_education(df, request.parameters)
         else:
             raise HTTPException(status_code=400, detail="Unsupported module")
     
@@ -703,53 +735,158 @@ def analyze_data(request: AnalysisRequest):
         raise HTTPException(status_code=400, detail=f"Analysis error: {str(e)}")
 
 def analyze_time_series(df: pd.DataFrame, params: Dict) -> Dict:
-    """Enhanced time series analysis with flexible datetime parsing"""
-    date_col = params.get('date_col', 'date')
-    value_col = params.get('value_col', 'value')
+    try:
+        """Enhanced time series analysis with flexible datetime parsing and multi-series support"""
+        logging.info('start analyze time series')
+        date_col = params.get('date_col', 'date')
+        value_col = params.get('value_col', 'value')
+        category_col = params.get('category_col', None)
+        
+        # Enhanced datetime parsing
+        df[date_col] = parse_datetime_flexible(df[date_col])
+        df = df.dropna(subset=[date_col])
+        df = df.sort_values(date_col)
+        
+        logging.info(df)
+
+        if df.empty:
+            raise ValueError("No valid datetime data found")
+        
+        # Multi time series support
+        if category_col and category_col in df.columns:
+            logging.info('analyze with category col')
+            # Analyze by category/analyze
+            categories = df[category_col].unique()
+            category_stats = {}
+            
+            for cat in categories:
+                cat_data = df[df[category_col] == cat].copy()
+                if len(cat_data) > 1:
+                    # Calculate trend slope using linear regression
+                    cat_data['days_from_start'] = (cat_data[date_col] - cat_data[date_col].min()).dt.days
+                    if len(cat_data) > 1 and cat_data['days_from_start'].std() > 0:
+                        slope = np.polyfit(cat_data['days_from_start'], cat_data[value_col], 1)[0]
+                    else:
+                        slope = 0
+                    
+                    category_stats[cat] = {
+                        "mean": clean_float(cat_data[value_col].mean()),
+                        "std": clean_float(cat_data[value_col].std()),
+                        "min": clean_float(cat_data[value_col].min()),
+                        "max": clean_float(cat_data[value_col].max()),
+                        "trend_slope": clean_float(slope),
+                        "trend": "increasing" if slope > 0 else "decreasing" if slope < 0 else "stable"
+                    }
+            
+            # Overall statistics
+            df['days_from_start'] = (df[date_col] - df[date_col].min()).dt.days
+            if len(df) > 1 and df['days_from_start'].std() > 0:
+                overall_slope = np.polyfit(df['days_from_start'], df[value_col], 1)[0]
+            else:
+                overall_slope = 0
+            
+            stats = {
+                "mean": clean_float(df[value_col].mean()),
+                "std": clean_float(df[value_col].std()),
+                "min": clean_float(df[value_col].min()),
+                "max": clean_float(df[value_col].max()),
+                "trend_slope": clean_float(overall_slope),
+                "trend": "increasing" if overall_slope > 0 else "decreasing" if overall_slope < 0 else "stable",
+                "categories": category_stats
+            }
+            
+            # Create multi-line plot
+            fig = px.line(df, x=date_col, y=value_col, color=category_col, 
+                        title="Multi Time Series Analysis")
+        else:
+            logging.info('analyze without category col')
+            # Single time series analysis
+            # Calculate trend slope using linear regression
+            df['days_from_start'] = (df[date_col] - df[date_col].min()).dt.days
+            if len(df) > 1 and df['days_from_start'].std() > 0:
+                slope = np.polyfit(df['days_from_start'], df[value_col], 1)[0]
+            else:
+                slope = 0
+            
+            # Basic statistics
+            stats = {
+                "mean": float(df[value_col].mean()),
+                "std": float(df[value_col].std()),
+                "min": float(df[value_col].min()),
+                "max": float(df[value_col].max()),
+                "trend_slope": float(slope),
+                "trend": "increasing" if slope > 0 else "decreasing" if slope < 0 else "stable"
+            }
+            logging.info('analyze without category col finish')
+            
+            # Create time series plot
+            fig = px.line(df, x=date_col, y=value_col, title="Time Series Analysis")
+        
+        plot_json = fig.to_json()
+        
+        # Enhanced seasonality analysis
+        logging.info('Enhanced seasonality analysis')
+        df['month'] = df[date_col].dt.month
+        df['day_of_week'] = df[date_col].dt.day_name()
+        df['hour'] = df[date_col].dt.hour
+        
+        monthly_avg = df.groupby('month')[value_col].mean()
+        seasonality_strength = float(monthly_avg.std() / monthly_avg.mean()) if monthly_avg.mean() != 0 else 0
+        
+        # Weekly seasonality
+        logging.info('Weekly seasonality')
+        weekly_avg = df.groupby('day_of_week')[value_col].mean()
+        weekly_seasonality = float(weekly_avg.std() / weekly_avg.mean()) if weekly_avg.mean() != 0 else 0
+        
+        # Volatility analysis
+        logging.info('Volatility analysis')
+        volatility = float(df[value_col].std() / df[value_col].mean()) if df[value_col].mean() != 0 else 0
+        
+        # Growth rate calculation (comparing first and last periods)
+        if len(df) > 1:
+            first_value = df[value_col].iloc[0]
+            last_value = df[value_col].iloc[-1]
+            if first_value != 0:
+                growth_rate = ((last_value - first_value) / first_value) * 100
+            else:
+                growth_rate = 0
+        else:
+            growth_rate = 0
+        
+        logging.info('creating insight')
+        insights = [
+            f"Average value: {stats['mean']:.2f}",
+            f"Overall trend: {stats['trend']} (slope: {stats['trend_slope']:.4f} per day)",
+            f"Seasonality strength: {'High' if seasonality_strength > 0.3 else 'Moderate' if seasonality_strength > 0.15 else 'Low'} ({seasonality_strength:.3f})",
+            f"Data span: {df[date_col].min().strftime('%Y-%m-%d')} to {df[date_col].max().strftime('%Y-%m-%d')}",
+            f"Total growth: {growth_rate:.1f}%",
+            f"Volatility: {'High' if volatility > 0.5 else 'Moderate' if volatility > 0.2 else 'Low'} ({volatility:.3f})"
+        ]
+        
+        logging.info(f"stats: {stats}")
+        logging.info(f"plot_json type: {type(plot_json)}")
+        logging.info(f"insights: {insights}")
+        logging.info(f"seasonality_strength: {seasonality_strength}")
+        logging.info(f"weekly_seasonality: {weekly_seasonality}")
+        logging.info(f"volatility: {volatility}")
+        logging.info(f"growth_rate: {growth_rate}")
+
+        response_data = {
+            "module": "time_series",
+            "statistics": stats,
+            "plot": plot_json,
+            "insights": insights,
+            "seasonality_strength": seasonality_strength,
+            "weekly_seasonality": weekly_seasonality,
+            "volatility": volatility,
+            "growth_rate": growth_rate,
+            "has_categories": category_col is not None and category_col in df.columns
+        }
     
-    # Enhanced datetime parsing
-    df[date_col] = parse_datetime_flexible(df[date_col])
-    df = df.dropna(subset=[date_col])
-    df = df.sort_values(date_col)
-    
-    if df.empty:
-        raise ValueError("No valid datetime data found")
-    
-    # Basic statistics
-    stats = {
-        "mean": float(df[value_col].mean()),
-        "std": float(df[value_col].std()),
-        "min": float(df[value_col].min()),
-        "max": float(df[value_col].max()),
-        "trend": "increasing" if df[value_col].iloc[-1] > df[value_col].iloc[0] else "decreasing"
-    }
-    
-    # Create time series plot
-    fig = px.line(df, x=date_col, y=value_col, title="Time Series Analysis")
-    plot_json = fig.to_json()
-    
-    # Enhanced seasonality analysis
-    df['month'] = df[date_col].dt.month
-    df['day_of_week'] = df[date_col].dt.day_name()
-    df['hour'] = df[date_col].dt.hour
-    
-    monthly_avg = df.groupby('month')[value_col].mean()
-    seasonality_strength = float(monthly_avg.std() / monthly_avg.mean()) if monthly_avg.mean() != 0 else 0
-    
-    insights = [
-        f"Average value: {stats['mean']:.2f}",
-        f"Overall trend: {stats['trend']}",
-        f"Seasonality strength: {'High' if seasonality_strength > 0.3 else 'Moderate' if seasonality_strength > 0.15 else 'Low'}",
-        f"Data span: {df[date_col].min().strftime('%Y-%m-%d')} to {df[date_col].max().strftime('%Y-%m-%d')}"
-    ]
-    
-    return {
-        "module": "time_series",
-        "statistics": stats,
-        "plot": plot_json,
-        "insights": insights,
-        "seasonality_strength": seasonality_strength
-    }
+        return sanitize_for_json(response_data)
+    except Exception as e:
+        logging.error(f"🔥 Internal error in time series analysis: {e}")
+        raise
 
 def analyze_customer(df: pd.DataFrame, params: Dict) -> Dict:
     """Enhanced customer analysis (RFM-like)"""

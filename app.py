@@ -232,8 +232,6 @@ with tab1:
 # Tab 2: Data Processing
 with tab2:
     st.header("🔧 Data Processing")
-    # logging.info("current data ")
-    # logging.info(st.session_state.current_data)
     
     if st.session_state.current_data is None:
         st.warning("⚠️ Please load data first in the Data Input tab")
@@ -248,6 +246,14 @@ with tab2:
                 datetime_col = st.selectbox("📅 Select Date/Time Column:", columns)
                 value_col = st.selectbox("📈 Select Value Column:", 
                                        [col for col in columns if col != datetime_col])
+                
+                # Tambahan: Category column untuk multi time series
+                category_col = st.selectbox("🏷️ Select Category Column (Optional):", 
+                                          ["None"] + [col for col in columns if col not in [datetime_col, value_col]],
+                                          help="Optional: Select a category column for multi-line time series analysis")
+                
+                if category_col == "None":
+                    category_col = None
                 
                 # Check if aggregation is needed
                 st.subheader("🔄 Data Aggregation")
@@ -271,7 +277,8 @@ with tab2:
                                 "datetime_col": datetime_col,
                                 "value_col": value_col,
                                 "agg_method": agg_method,
-                                "freq": freq
+                                "freq": freq,
+                                "category_col": category_col  # Tambahan
                             }
                             response = requests.post(f"{API_BASE_URL}/aggregate-data", json=payload)
                             
@@ -280,6 +287,11 @@ with tab2:
                                 st.session_state.current_session_id = agg_data['session_id']
                                 st.session_state.current_data = pd.DataFrame(agg_data['data'])
                                 st.success("✅ Data aggregated successfully!")
+                                # Update category_col untuk analisis berikutnya
+                                if agg_data.get('has_category', False):
+                                    category_col = 'category'
+                                else:
+                                    category_col = None
                                 st.rerun()
                             else:
                                 st.error(f"❌ Aggregation failed: {response.text}")
@@ -299,6 +311,7 @@ with tab2:
                 **Time Series Configuration:**
                 - 📅 Date Column: `{datetime_col if 'datetime_col' in locals() else 'Not selected'}`
                 - 📈 Value Column: `{value_col if 'value_col' in locals() else 'Not selected'}`
+                - 🏷️ Category Column: `{category_col if 'category_col' in locals() and category_col else 'None (Single series)'}`
                 """
                 if 'needs_agg' in locals() and needs_agg:
                     processing_info += f"""
@@ -317,16 +330,16 @@ with tab2:
             st.markdown(processing_info)
             
             # Ready to analyze button
-            # logging.info('locals()')
-            # logging.info(locals())
-            # logging.info('module')
-            # logging.info(module)
             if module == "time_series" and 'datetime_col' in locals() and 'value_col' in locals():
                 analysis_ready = True
                 analysis_params = {
                     'date_col': 'date' if needs_agg and 'needs_agg' in locals() else datetime_col,
                     'value_col': 'value' if needs_agg and 'needs_agg' in locals() else value_col
                 }
+                # Tambahan category_col ke parameters
+                if category_col:
+                    analysis_params['category_col'] = 'category' if needs_agg and 'needs_agg' in locals() else category_col
+                    
             elif module == "customer" and 'customer_col' in locals() and 'amount_col' in locals() and 'date_col' in locals():
                 analysis_ready = True
                 analysis_params = {
@@ -349,6 +362,10 @@ with tab2:
                             "parameters": analysis_params
                         }
                         response = requests.post(f"{API_BASE_URL}/analyze", json=payload)
+                        logging.info(payload)
+
+                        logging.info('response analysis')
+                        logging.info(response)
                         
                         if response.status_code == 200:
                             st.session_state.analysis_results = response.json()
@@ -358,6 +375,7 @@ with tab2:
                             st.error(f"❌ Analysis failed: {response.text}")
             else:
                 st.warning("⚠️ Please configure all required columns")
+
 
 # Tab 3: Analysis Results
 with tab3:
@@ -474,22 +492,85 @@ with tab3:
         with col2:
             st.subheader("🔍 Detailed Analysis", help="In-depth metrics and analysis results specific to your chosen module")
             if results['module'] == 'time_series':
+                # Seasonality Analysis
                 seasonality_strength = results.get('seasonality_strength', 0)
-                st.write(f"**Seasonality Strength:** {seasonality_strength:.3f}",
-                        help="Measures how strong the seasonal patterns are in your data (0 = no seasonality, 1 = perfect seasonality)")
-                seasonality_level = "High" if seasonality_strength > 0.3 else "Low"
-                st.write(f"**Seasonality Level:** {seasonality_level}",
-                        help="Interpretation of seasonality strength: High (>0.3) means strong seasonal patterns, Low (≤0.3) means weak or no seasonal patterns")
+                weekly_seasonality = results.get('weekly_seasonality', 0)
+                
+                st.write(f"**📅 Monthly Seasonality:** {seasonality_strength:.3f}",
+                        help="Measures how strong the monthly seasonal patterns are in your data. Values closer to 1 indicate stronger seasonality. This is calculated as the coefficient of variation of monthly averages (standard deviation / mean).")
+                
+                seasonality_level = "High" if seasonality_strength > 0.3 else "Moderate" if seasonality_strength > 0.15 else "Low"
+                st.write(f"**📈 Seasonality Level:** {seasonality_level}",
+                        help="Interpretation: High (>0.3) = Strong seasonal patterns with significant monthly variations; Moderate (0.15-0.3) = Some seasonal patterns; Low (≤0.15) = Weak or no clear seasonal patterns")
+                
+                st.write(f"**📊 Weekly Seasonality:** {weekly_seasonality:.3f}",
+                        help="Measures weekly patterns in your data. Higher values indicate stronger day-of-week effects (e.g., higher sales on weekends).")
+                
+                # Volatility Analysis
+                volatility = results.get('volatility', 0)
+                volatility_level = "High" if volatility > 0.5 else "Moderate" if volatility > 0.2 else "Low"
+                
+                st.write(f"**🌊 Volatility:** {volatility:.3f} ({volatility_level})",
+                        help="Measures how much your data fluctuates relative to its average (coefficient of variation). High volatility (>0.5) means unpredictable swings; Low volatility (≤0.2) means stable, predictable patterns.")
+                
+                # Growth Analysis
+                growth_rate = results.get('growth_rate', 0)
+                growth_direction = "Growth" if growth_rate > 0 else "Decline" if growth_rate < 0 else "Stable"
+                
+                st.write(f"**📈 Total Growth:** {growth_rate:.1f}% ({growth_direction})",
+                        help="Percentage change from the first data point to the last data point in your time series. Positive values indicate overall growth, negative values indicate decline.")
+                
+                # Trend Analysis (dengan penjelasan slope)
+                trend_slope = results['statistics'].get('trend_slope', 0)
+                st.write(f"**📏 Trend Slope:** {trend_slope:.6f} units/day",
+                        help="The daily rate of change calculated using linear regression. This tells you how much your values increase (positive) or decrease (negative) per day on average. Larger absolute values indicate steeper trends.")
+                
+                # Category Analysis (jika ada)
+                if results.get('has_categories', False):
+                    st.write("**🏷️ Category Breakdown:**")
+                    categories = results['statistics'].get('categories', {})
+                    for cat, cat_stats in categories.items():
+                        st.write(f"• {cat}: Trend {cat_stats['trend']} ({cat_stats['trend_slope']:.4f}/day)")
                 
             elif results['module'] == 'customer':
                 rfm = results['rfm_summary']
-                st.write("**RFM Averages:**", help="Average values across all customers for the three key RFM metrics")
-                st.write(f"• Recency: {rfm['avg_recency']:.1f} days",
-                        help="Average number of days since customers' last purchase")
-                st.write(f"• Frequency: {rfm['avg_frequency']:.1f} transactions",
-                        help="Average number of transactions per customer")
-                st.write(f"• Monetary: ${rfm['avg_monetary']:.2f}",
-                        help="Average total amount spent per customer")
+                
+                st.write("**🎯 RFM Analysis Overview:**",
+                        help="RFM (Recency, Frequency, Monetary) is a proven method for analyzing customer behavior and value. It helps identify your most valuable customers and those at risk of churning.")
+                
+                st.write(f"**📅 Average Recency:** {rfm['avg_recency']:.1f} days",
+                        help="How recently customers made their last purchase. Lower values are better - they indicate more recent engagement. Values >90 days may indicate customers at risk of churning.")
+                
+                st.write(f"**🔄 Average Frequency:** {rfm['avg_frequency']:.1f} transactions",
+                        help="How often customers make purchases. Higher values indicate more loyal, engaged customers. This metric helps identify your most active customer segments.")
+                
+                st.write(f"**💰 Average Monetary Value:** ${rfm['avg_monetary']:.2f}",
+                        help="Average total amount spent per customer over their entire relationship with your business. This helps identify high-value customers who contribute most to revenue.")
+                
+                # Customer Distribution Insights
+                segments = results['segments']
+                total_customers = sum(segments.values())
+                
+                st.write("**📊 Customer Distribution Insights:**")
+                
+                # Calculate key percentages
+                champions_pct = (segments.get('Champions', 0) / total_customers) * 100 if total_customers > 0 else 0
+                at_risk_pct = (segments.get('At Risk', 0) / total_customers) * 100 if total_customers > 0 else 0
+                loyal_pct = (segments.get('Loyal Customers', 0) / total_customers) * 100 if total_customers > 0 else 0
+                
+                st.write(f"• **Top Customers (Champions):** {champions_pct:.1f}% of customer base",
+                        help="Your best customers with high recency, frequency, and monetary scores. These are your most valuable customers who should receive premium treatment.")
+                
+                st.write(f"• **Loyal Customers:** {loyal_pct:.1f}% of customer base", 
+                        help="Regular customers with good purchase frequency and value. Focus on maintaining their loyalty and potentially upgrading them to Champions.")
+                
+                st.write(f"• **At-Risk Customers:** {at_risk_pct:.1f}% of customer base",
+                        help="Previously valuable customers who haven't purchased recently. These customers need immediate attention through targeted re-engagement campaigns.")
+                
+                # Business Health Indicators
+                healthy_customers_pct = champions_pct + loyal_pct
+                st.write(f"**🏥 Customer Health Score:** {healthy_customers_pct:.1f}%",
+                        help="Percentage of customers in 'Champions' and 'Loyal Customers' segments. Values >40% indicate a healthy customer base; <20% suggests need for customer retention strategies.")
         
         # Export option
         st.subheader("📥 Export Results")

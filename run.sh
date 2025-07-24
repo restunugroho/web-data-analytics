@@ -72,7 +72,7 @@ BACKEND_PID=$!
 
 # Wait for backend to start
 echo "⏳ Waiting for backend to start..."
-sleep 10
+sleep 180
 
 # Check if backend is running
 if ! curl -s http://localhost:8000/ > /dev/null; then
