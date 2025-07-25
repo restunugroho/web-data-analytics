@@ -11,6 +11,8 @@ import plotly.express as px
 import plotly.graph_objects as go
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
+from scipy.signal import savgol_filter
+from scipy.stats import linregress
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -736,7 +738,7 @@ def analyze_data(request: AnalysisRequest):
 
 def analyze_time_series(df: pd.DataFrame, params: Dict) -> Dict:
     try:
-        """Enhanced time series analysis with flexible datetime parsing and multi-series support"""
+        """Enhanced time series analysis with decomposition and multi-series support"""
         logging.info('start analyze time series')
         date_col = params.get('date_col', 'date')
         value_col = params.get('value_col', 'value')
@@ -752,12 +754,17 @@ def analyze_time_series(df: pd.DataFrame, params: Dict) -> Dict:
         if df.empty:
             raise ValueError("No valid datetime data found")
         
+        # Prepare data for decomposition
+        df_for_decomp = df.copy()
+        df_for_decomp['days_from_start'] = (df_for_decomp[date_col] - df_for_decomp[date_col].min()).dt.days
+        
         # Multi time series support
         if category_col and category_col in df.columns:
             logging.info('analyze with category col')
-            # Analyze by category/analyze
+            # Analyze by category
             categories = df[category_col].unique()
             category_stats = {}
+            category_decompositions = {}
             
             for cat in categories:
                 cat_data = df[df[category_col] == cat].copy()
@@ -777,6 +784,29 @@ def analyze_time_series(df: pd.DataFrame, params: Dict) -> Dict:
                         "trend_slope": clean_float(slope),
                         "trend": "increasing" if slope > 0 else "decreasing" if slope < 0 else "stable"
                     }
+                    
+                    # Decomposition for each category
+                    if len(cat_data) >= 10:  # Need minimum data points
+                        cat_data_sorted = cat_data.sort_values(date_col).reset_index(drop=True)
+                        
+                        # Simple trend calculation using linear regression
+                        x_vals = np.arange(len(cat_data_sorted))
+                        trend_line = np.polyval(np.polyfit(x_vals, cat_data_sorted[value_col], 1), x_vals)
+                        
+                        # Simple seasonal calculation using moving average
+                        window_size = min(12, len(cat_data_sorted) // 2)
+                        if window_size >= 3:
+                            seasonal = cat_data_sorted[value_col] - pd.Series(trend_line)
+                            seasonal_smooth = seasonal.rolling(window=window_size, center=True).mean().fillna(0)
+                        else:
+                            seasonal_smooth = np.zeros(len(cat_data_sorted))
+                        
+                        category_decompositions[cat] = {
+                            'dates': cat_data_sorted[date_col].dt.strftime('%Y-%m-%d').tolist(),
+                            'original': cat_data_sorted[value_col].tolist(),
+                            'trend': trend_line.tolist(),
+                            'seasonal': seasonal_smooth.tolist()
+                        }
             
             # Overall statistics
             df['days_from_start'] = (df[date_col] - df[date_col].min()).dt.days
@@ -795,9 +825,39 @@ def analyze_time_series(df: pd.DataFrame, params: Dict) -> Dict:
                 "categories": category_stats
             }
             
-            # Create multi-line plot
+            # Create multi-line plot with enhanced styling
             fig = px.line(df, x=date_col, y=value_col, color=category_col, 
                         title="Multi Time Series Analysis")
+            fig.update_layout(
+                plot_bgcolor='rgba(0,0,0,0)',
+                paper_bgcolor='rgba(0,0,0,0)',
+                font=dict(color='#2E4057'),
+                title_font_size=16,
+                xaxis=dict(gridcolor='rgba(128,128,128,0.2)'),
+                yaxis=dict(gridcolor='rgba(128,128,128,0.2)')
+            )
+            
+            # Add overall decomposition
+            overall_decomposition = None
+            if len(df) >= 10:
+                df_sorted = df.sort_values(date_col).reset_index(drop=True)
+                x_vals = np.arange(len(df_sorted))
+                trend_line = np.polyval(np.polyfit(x_vals, df_sorted[value_col], 1), x_vals)
+                
+                window_size = min(12, len(df_sorted) // 2)
+                if window_size >= 3:
+                    seasonal = df_sorted[value_col] - pd.Series(trend_line)
+                    seasonal_smooth = seasonal.rolling(window=window_size, center=True).mean().fillna(0)
+                else:
+                    seasonal_smooth = np.zeros(len(df_sorted))
+                
+                overall_decomposition = {
+                    'dates': df_sorted[date_col].dt.strftime('%Y-%m-%d').tolist(),
+                    'original': df_sorted[value_col].tolist(),
+                    'trend': trend_line.tolist(),
+                    'seasonal': seasonal_smooth.tolist()
+                }
+                
         else:
             logging.info('analyze without category col')
             # Single time series analysis
@@ -819,8 +879,40 @@ def analyze_time_series(df: pd.DataFrame, params: Dict) -> Dict:
             }
             logging.info('analyze without category col finish')
             
-            # Create time series plot
+            # Create time series plot with enhanced styling
             fig = px.line(df, x=date_col, y=value_col, title="Time Series Analysis")
+            fig.update_layout(
+                plot_bgcolor='rgba(0,0,0,0)',
+                paper_bgcolor='rgba(0,0,0,0)',
+                font=dict(color='#2E4057'),
+                title_font_size=16,
+                xaxis=dict(gridcolor='rgba(128,128,128,0.2)'),
+                yaxis=dict(gridcolor='rgba(128,128,128,0.2)')
+            )
+            fig.update_traces(line=dict(color='#3B82F6', width=2))
+            
+            # Single series decomposition
+            category_decompositions = {}
+            overall_decomposition = None
+            
+            if len(df) >= 10:
+                df_sorted = df.sort_values(date_col).reset_index(drop=True)
+                x_vals = np.arange(len(df_sorted))
+                trend_line = np.polyval(np.polyfit(x_vals, df_sorted[value_col], 1), x_vals)
+                
+                window_size = min(12, len(df_sorted) // 2)
+                if window_size >= 3:
+                    seasonal = df_sorted[value_col] - pd.Series(trend_line)
+                    seasonal_smooth = seasonal.rolling(window=window_size, center=True).mean().fillna(0)
+                else:
+                    seasonal_smooth = np.zeros(len(df_sorted))
+                
+                overall_decomposition = {
+                    'dates': df_sorted[date_col].dt.strftime('%Y-%m-%d').tolist(),
+                    'original': df_sorted[value_col].tolist(),
+                    'trend': trend_line.tolist(),
+                    'seasonal': seasonal_smooth.tolist()
+                }
         
         plot_json = fig.to_json()
         
@@ -866,10 +958,6 @@ def analyze_time_series(df: pd.DataFrame, params: Dict) -> Dict:
         logging.info(f"stats: {stats}")
         logging.info(f"plot_json type: {type(plot_json)}")
         logging.info(f"insights: {insights}")
-        logging.info(f"seasonality_strength: {seasonality_strength}")
-        logging.info(f"weekly_seasonality: {weekly_seasonality}")
-        logging.info(f"volatility: {volatility}")
-        logging.info(f"growth_rate: {growth_rate}")
 
         response_data = {
             "module": "time_series",
@@ -880,7 +968,10 @@ def analyze_time_series(df: pd.DataFrame, params: Dict) -> Dict:
             "weekly_seasonality": weekly_seasonality,
             "volatility": volatility,
             "growth_rate": growth_rate,
-            "has_categories": category_col is not None and category_col in df.columns
+            "has_categories": category_col is not None and category_col in df.columns,
+            "category_decompositions": category_decompositions,
+            "overall_decomposition": overall_decomposition,
+            "categories_list": list(categories) if category_col and category_col in df.columns else []
         }
     
         return sanitize_for_json(response_data)
