@@ -13,6 +13,14 @@ from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
 from scipy.signal import savgol_filter
 from scipy.stats import linregress
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.svm import SVR
+from sklearn.preprocessing import PolynomialFeatures
+from sklearn.pipeline import Pipeline
+from scipy.fftpack import fft
+# from scipy.stats import jarque_bera, adfuller
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -736,13 +744,788 @@ def analyze_data(request: AnalysisRequest):
         logging.error(f"Analysis error: {str(e)}")
         raise HTTPException(status_code=400, detail=f"Analysis error: {str(e)}")
 
+@app.post("/compare-models")
+def compare_models_endpoint(request: AnalysisRequest):
+    """Compare multiple forecasting models"""
+    if request.session_id not in data_store:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    df = data_store[request.session_id].copy()
+    
+    try:
+        if request.module == "time_series":
+            return compare_forecasting_models(df, request.parameters)
+        else:
+            raise HTTPException(status_code=400, detail="Model comparison only available for time series")
+    
+    except Exception as e:
+        logging.error(f"Model comparison error: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Model comparison error: {str(e)}")
+    
+
+def compare_forecasting_models(df: pd.DataFrame, params: Dict) -> Dict:
+    """Compare multiple forecasting models and return performance metrics"""
+    try:
+        date_col = params.get('date_col', 'date')
+        value_col = params.get('value_col', 'value')
+        comparison_models = params.get('comparison_models', ['linear_regression', 'random_forest', 'ets', 'naive'])
+        
+        # Parse and prepare data
+        df[date_col] = parse_datetime_flexible(df[date_col])
+        df = df.dropna(subset=[date_col])
+        df = df.sort_values(date_col)
+        
+        if len(df) < 10:
+            raise ValueError("Insufficient data for model comparison (minimum 10 points required)")
+        
+        comparison_results = {}
+        
+        # Test each model
+        for model_type in comparison_models:
+            try:
+                logging.info(f"Testing model: {model_type}")
+                
+                # Get forecast for this model
+                forecast_data, forecast_insight, forecast_error = create_forecast(
+                    df, date_col, value_col, model_type=model_type
+                )
+                
+                if forecast_data and forecast_error is None:
+                    metrics = forecast_data['metrics']
+                    
+                    comparison_results[model_type] = {
+                        'model_name': forecast_data['model_name'],
+                        'mae': metrics['mae'],
+                        'rmse': metrics['rmse'],
+                        'r2': metrics.get('r2', None),
+                        'mape': metrics.get('mape', None),
+                        'directional_accuracy': metrics.get('directional_accuracy', None),
+                        'insight': forecast_insight,
+                        'status': 'success'
+                    }
+                else:
+                    comparison_results[model_type] = {
+                        'model_name': model_type.replace('_', ' ').title(),
+                        'status': 'failed',
+                        'error': forecast_error or 'Unknown error'
+                    }
+                    
+            except Exception as e:
+                logging.error(f"Error testing model {model_type}: {str(e)}")
+                comparison_results[model_type] = {
+                    'model_name': model_type.replace('_', ' ').title(),
+                    'status': 'failed',
+                    'error': str(e)
+                }
+        
+        # Rank models by performance (lower MAE is better)
+        successful_models = {k: v for k, v in comparison_results.items() if v['status'] == 'success'}
+        
+        if successful_models:
+            # Sort by MAE (ascending - lower is better)
+            ranked_models = sorted(successful_models.items(), key=lambda x: x[1]['mae'])
+            
+            # Best model
+            best_model = ranked_models[0]
+            
+            # Create comparison table data
+            comparison_table = []
+            for rank, (model_key, model_data) in enumerate(ranked_models, 1):
+                comparison_table.append({
+                    'rank': rank,
+                    'model': model_data['model_name'],
+                    'model_key': model_key,
+                    'mae': model_data['mae'],
+                    'rmse': model_data['rmse'],
+                    'r2': model_data.get('r2'),
+                    'mape': model_data.get('mape'),
+                    'directional_accuracy': model_data.get('directional_accuracy'),
+                    'status': 'success'
+                })
+            
+            # Add failed models
+            for model_key, model_data in comparison_results.items():
+                if model_data['status'] == 'failed':
+                    comparison_table.append({
+                        'rank': None,
+                        'model': model_data['model_name'],
+                        'model_key': model_key,
+                        'mae': None,
+                        'rmse': None,
+                        'r2': None,
+                        'mape': None,
+                        'directional_accuracy': None,
+                        'status': 'failed',
+                        'error': model_data.get('error', 'Unknown error')
+                    })
+            
+            return {
+                'comparison_results': comparison_results,
+                'comparison_table': comparison_table,
+                'best_model': {
+                    'model_key': best_model[0],
+                    'model_name': best_model[1]['model_name'],
+                    'mae': best_model[1]['mae'],
+                    'rmse': best_model[1]['rmse'],
+                    'r2': best_model[1].get('r2'),
+                    'mape': best_model[1].get('mape')
+                },
+                'total_models_tested': len(comparison_models),
+                'successful_models': len(successful_models),
+                'failed_models': len(comparison_models) - len(successful_models)
+            }
+        else:
+            raise ValueError("All models failed to run successfully")
+            
+    except Exception as e:
+        logging.error(f"Model comparison error: {str(e)}")
+        raise
+
+def create_forecast(data, date_column, value_column, forecast_periods=None, model_type='linear_regression'):
+    """Enhanced forecast with multiple model options and seasonality handling"""
+    if len(data) < 10:
+        return None, None, "Insufficient data for forecasting (minimum 10 points required)"
+    
+    # Use last 20% for testing
+    test_size = max(1, int(len(data) * 0.2))
+    train_data = data.iloc[:-test_size].copy()
+    test_data = data.iloc[-test_size:].copy()
+    
+    if len(train_data) < 5:
+        return None, None, "Insufficient training data for forecasting"
+    
+    try:
+        from sklearn.linear_model import LinearRegression
+        from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+        import numpy as np
+        
+        # Feature engineering
+        def create_features(df, date_col, value_col):
+            """Create time-based and seasonal features"""
+            df = df.copy()
+            df['days_numeric'] = (df[date_col] - df[date_col].min()).dt.days
+            df['month'] = df[date_col].dt.month
+            df['day_of_week'] = df[date_col].dt.dayofweek
+            df['quarter'] = df[date_col].dt.quarter
+            df['day_of_year'] = df[date_col].dt.dayofyear
+            
+            # Cyclical encoding for better seasonality capture
+            df['month_sin'] = np.sin(2 * np.pi * df['month'] / 12)
+            df['month_cos'] = np.cos(2 * np.pi * df['month'] / 12)
+            df['dow_sin'] = np.sin(2 * np.pi * df['day_of_week'] / 7)
+            df['dow_cos'] = np.cos(2 * np.pi * df['day_of_week'] / 7)
+            df['doy_sin'] = np.sin(2 * np.pi * df['day_of_year'] / 365.25)
+            df['doy_cos'] = np.cos(2 * np.pi * df['day_of_year'] / 365.25)
+            
+            # Lag features
+            if len(df) > 7:
+                df['lag_7'] = df[value_col].shift(7).fillna(df[value_col].mean())
+            if len(df) > 30:
+                df['lag_30'] = df[value_col].shift(30).fillna(df[value_col].mean())
+                df['rolling_7'] = df[value_col].rolling(7, min_periods=1).mean()
+                df['rolling_30'] = df[value_col].rolling(30, min_periods=1).mean()
+            
+            return df
+        
+        # Create features
+        train_features = create_features(train_data, date_column, value_column)
+        test_features = create_features(test_data, date_column, value_column)
+        
+        # Select feature columns (exclude original date and value columns)
+        feature_cols = [
+            col for col in train_features.columns
+            if col not in [date_column, value_column]
+            and pd.api.types.is_numeric_dtype(train_features[col])
+            and not train_features[col].isna().all()
+        ]
+        
+        X_train = train_features[feature_cols].fillna(0)
+        y_train = train_features[value_column].values
+        X_test = test_features[feature_cols].fillna(0)
+        y_actual = test_features[value_column].values
+        
+        # Initialize model based on selection
+        if model_type == 'linear_regression':
+            model = LinearRegression()
+            model_name = "Linear Regression"
+            
+        elif model_type == 'random_forest':
+            model = RandomForestRegressor(
+                n_estimators=100,
+                max_depth=10,
+                min_samples_split=5,
+                min_samples_leaf=2,
+                random_state=42
+            )
+            model_name = "Random Forest"
+            
+        elif model_type == 'catboost':
+            try:
+                from catboost import CatBoostRegressor
+                model = CatBoostRegressor(
+                    iterations=100,
+                    depth=6,
+                    learning_rate=0.1,
+                    random_seed=42,
+                    verbose=False
+                )
+                model_name = "CatBoost"
+            except ImportError:
+                # Fallback to Random Forest if CatBoost not available
+                model = RandomForestRegressor(n_estimators=100, random_state=42)
+                model_name = "Random Forest (CatBoost not available)"
+                
+        elif model_type == 'arima':
+            return create_arima_forecast(train_data, test_data, date_column, value_column)
+            
+        elif model_type == 'ets':
+            return create_ets_forecast(train_data, test_data, date_column, value_column)
+            
+        elif model_type == 'theta':
+            return create_theta_forecast(train_data, test_data, date_column, value_column)
+            
+        elif model_type == 'moving_average':
+            return create_moving_average_forecast(train_data, test_data, date_column, value_column)
+            
+        elif model_type == 'naive':
+            return create_naive_forecast(train_data, test_data, date_column, value_column)
+            
+        elif model_type == 'naive_drift':
+            return create_naive_drift_forecast(train_data, test_data, date_column, value_column)
+        
+        # Fit model
+        model.fit(X_train, y_train)
+        
+        # Make predictions
+        y_pred = model.predict(X_test)
+        
+        # Calculate residuals for prediction intervals
+        train_pred = model.predict(X_train)
+        residuals = y_train - train_pred
+        mse = np.mean(residuals**2)
+        std_error = np.sqrt(mse)
+        
+        # Enhanced prediction intervals
+        prediction_variance = std_error * np.sqrt(1 + 1/len(train_data))
+        ci_50_lower = y_pred - 0.674 * prediction_variance
+        ci_50_upper = y_pred + 0.674 * prediction_variance
+        ci_80_lower = y_pred - 1.282 * prediction_variance
+        ci_80_upper = y_pred + 1.282 * prediction_variance
+        ci_95_lower = y_pred - 1.96 * prediction_variance
+        ci_95_upper = y_pred + 1.96 * prediction_variance
+        
+        # Calculate comprehensive metrics
+        mae = mean_absolute_error(y_actual, y_pred)
+        rmse = np.sqrt(mean_squared_error(y_actual, y_pred))
+        r2 = r2_score(y_actual, y_pred)
+        mape = np.mean(np.abs((y_actual - y_pred) / y_actual)) * 100 if np.all(y_actual != 0) else float('inf')
+        
+        # Additional metrics
+        mse_score = mean_squared_error(y_actual, y_pred)
+        
+        # Directional accuracy (for trend prediction)
+        if len(y_actual) > 1:
+            actual_direction = np.diff(y_actual) > 0
+            pred_direction = np.diff(y_pred) > 0
+            directional_accuracy = np.mean(actual_direction == pred_direction) * 100
+        else:
+            directional_accuracy = None
+        
+        # Feature importance for tree-based models
+        feature_importance = None
+        if hasattr(model, 'feature_importances_'):
+            importance_dict = dict(zip(feature_cols, model.feature_importances_))
+            # Sort by importance
+            feature_importance = dict(sorted(importance_dict.items(), key=lambda x: x[1], reverse=True))
+        
+        forecast_data = {
+            'model_name': model_name,
+            'train_dates': train_data[date_column].dt.strftime('%Y-%m-%d').tolist(),
+            'train_values': train_data[value_column].tolist(),
+            'test_dates': test_data[date_column].dt.strftime('%Y-%m-%d').tolist(),
+            'test_actual': y_actual.tolist(),
+            'test_predicted': y_pred.tolist(),
+            'ci_50_lower': ci_50_lower.tolist(),
+            'ci_50_upper': ci_50_upper.tolist(),
+            'ci_80_lower': ci_80_lower.tolist(),
+            'ci_80_upper': ci_80_upper.tolist(),
+            'ci_95_lower': ci_95_lower.tolist(),
+            'ci_95_upper': ci_95_upper.tolist(),
+            'split_date': train_data[date_column].iloc[-1].strftime('%Y-%m-%d'),
+            'metrics': {
+                'mae': float(mae),
+                'rmse': float(rmse),
+                'mse': float(mse_score),
+                'r2': float(r2),
+                'mape': float(mape) if mape != float('inf') else None,
+                'directional_accuracy': float(directional_accuracy) if directional_accuracy is not None else None
+            },
+            'feature_importance': feature_importance,
+            'model_type': model_type
+        }
+        
+        # Model-specific insights
+        if model_type == 'random_forest' and feature_importance:
+            top_features = list(feature_importance.keys())[:3]
+            forecast_insight = f"Random Forest - Top features: {', '.join(top_features[:3])}"
+        elif model_type == 'catboost' and feature_importance:
+            top_features = list(feature_importance.keys())[:3]
+            forecast_insight = f"CatBoost - Top features: {', '.join(top_features[:3])}"
+        else:
+            forecast_insight = f"{model_name} - MAE: {mae:.2f}, RMSE: {rmse:.2f}"
+        
+        if mape != float('inf'):
+            forecast_insight += f", MAPE: {mape:.1f}%"
+        
+        if r2 >= 0:
+            forecast_insight += f", R²: {r2:.3f}"
+        
+        return forecast_data, forecast_insight, None
+        
+    except Exception as e:
+        logging.error(f"Forecasting error with {model_type}: {str(e)}")
+        return None, None, f"Forecasting error: {str(e)}"
+
+
+# Statistical forecasting methods
+def create_arima_forecast(train_data, test_data, date_column, value_column):
+    """Simple ARIMA-like forecast using statsmodels or basic implementation"""
+    try:
+        # Simple auto-regressive approach as ARIMA fallback
+        values = train_data[value_column].values
+        
+        # Simple AR(1) model
+        if len(values) > 1:
+            # Calculate autocorrelation
+            lag1_corr = np.corrcoef(values[:-1], values[1:])[0, 1] if not np.isnan(np.corrcoef(values[:-1], values[1:])[0, 1]) else 0
+            
+            # Simple prediction using last value + trend
+            trend = np.mean(np.diff(values)) if len(values) > 1 else 0
+            last_value = values[-1]
+            
+            predictions = []
+            current_val = last_value
+            
+            for _ in range(len(test_data)):
+                next_val = lag1_corr * current_val + (1 - lag1_corr) * np.mean(values) + trend
+                predictions.append(next_val)
+                current_val = next_val
+            
+            y_pred = np.array(predictions)
+            y_actual = test_data[value_column].values
+            
+            # Calculate metrics
+            mae = mean_absolute_error(y_actual, y_pred)
+            rmse = np.sqrt(mean_squared_error(y_actual, y_pred))
+            r2 = r2_score(y_actual, y_pred)
+            
+            # Simple confidence intervals
+            residual_std = np.std(values - np.mean(values))
+            ci_50_lower = y_pred - 0.674 * residual_std
+            ci_50_upper = y_pred + 0.674 * residual_std
+            ci_80_lower = y_pred - 1.282 * residual_std
+            ci_80_upper = y_pred + 1.282 * residual_std
+            ci_95_lower = y_pred - 1.96 * residual_std
+            ci_95_upper = y_pred + 1.96 * residual_std
+            
+            forecast_data = {
+                'model_name': 'ARIMA (Simple AR)',
+                'train_dates': train_data[date_column].dt.strftime('%Y-%m-%d').tolist(),
+                'train_values': train_data[value_column].tolist(),
+                'test_dates': test_data[date_column].dt.strftime('%Y-%m-%d').tolist(),
+                'test_actual': y_actual.tolist(),
+                'test_predicted': y_pred.tolist(),
+                'ci_50_lower': ci_50_lower.tolist(),
+                'ci_50_upper': ci_50_upper.tolist(),
+                'ci_80_lower': ci_80_lower.tolist(),
+                'ci_80_upper': ci_80_upper.tolist(),
+                'ci_95_lower': ci_95_lower.tolist(),
+                'ci_95_upper': ci_95_upper.tolist(),
+                'split_date': train_data[date_column].iloc[-1].strftime('%Y-%m-%d'),
+                'metrics': {
+                    'mae': float(mae),
+                    'rmse': float(rmse),
+                    'r2': float(r2),
+                    'mape': float(np.mean(np.abs((y_actual - y_pred) / y_actual)) * 100) if np.all(y_actual != 0) else None
+                },
+                'model_type': 'arima'
+            }
+            
+            return forecast_data, f"ARIMA - MAE: {mae:.2f}, RMSE: {rmse:.2f}", None
+        
+    except Exception as e:
+        return None, None, f"ARIMA forecasting error: {str(e)}"
+
+def create_ets_forecast(train_data, test_data, date_column, value_column):
+    """Exponential Smoothing forecast"""
+    try:
+        values = train_data[value_column].values
+        
+        # Simple exponential smoothing with trend and seasonality
+        alpha = 0.3  # Smoothing parameter for level
+        beta = 0.1   # Smoothing parameter for trend
+        gamma = 0.1  # Smoothing parameter for seasonality (if applicable)
+        
+        # Initialize
+        level = values[0]
+        trend = np.mean(np.diff(values[:min(12, len(values))]))
+        
+        # Simple seasonal pattern (if enough data)
+        seasonal_period = min(12, len(values) // 2)
+        if seasonal_period > 1 and len(values) >= seasonal_period * 2:
+            seasonal = np.mean(values[:seasonal_period])
+        else:
+            seasonal = 0
+        
+        predictions = []
+        
+        for i in range(len(test_data)):
+            forecast = level + trend + seasonal
+            predictions.append(forecast)
+            
+            # Update (using actual values if available for in-sample fit)
+            if i < len(values) - len(train_data):
+                actual = values[len(train_data) + i]
+                level = alpha * actual + (1 - alpha) * (level + trend)
+                trend = beta * (level - level) + (1 - beta) * trend
+        
+        y_pred = np.array(predictions)
+        y_actual = test_data[value_column].values
+        
+        # Calculate metrics
+        mae = mean_absolute_error(y_actual, y_pred)
+        rmse = np.sqrt(mean_squared_error(y_actual, y_pred))
+        r2 = r2_score(y_actual, y_pred)
+        
+        # Confidence intervals
+        residual_std = np.std(values)
+        ci_50_lower = y_pred - 0.674 * residual_std
+        ci_50_upper = y_pred + 0.674 * residual_std
+        ci_80_lower = y_pred - 1.282 * residual_std
+        ci_80_upper = y_pred + 1.282 * residual_std
+        ci_95_lower = y_pred - 1.96 * residual_std
+        ci_95_upper = y_pred + 1.96 * residual_std
+        
+        forecast_data = {
+            'model_name': 'Exponential Smoothing (ETS)',
+            'train_dates': train_data[date_column].dt.strftime('%Y-%m-%d').tolist(),
+            'train_values': train_data[value_column].tolist(),
+            'test_dates': test_data[date_column].dt.strftime('%Y-%m-%d').tolist(),
+            'test_actual': y_actual.tolist(),
+            'test_predicted': y_pred.tolist(),
+            'ci_50_lower': ci_50_lower.tolist(),
+            'ci_50_upper': ci_50_upper.tolist(),
+            'ci_80_lower': ci_80_lower.tolist(),
+            'ci_80_upper': ci_80_upper.tolist(),
+            'ci_95_lower': ci_95_lower.tolist(),
+            'ci_95_upper': ci_95_upper.tolist(),
+            'split_date': train_data[date_column].iloc[-1].strftime('%Y-%m-%d'),
+            'metrics': {
+                'mae': float(mae),
+                'rmse': float(rmse),
+                'r2': float(r2),
+                'mape': float(np.mean(np.abs((y_actual - y_pred) / y_actual)) * 100) if np.all(y_actual != 0) else None
+            },
+            'model_type': 'ets'
+        }
+        
+        return forecast_data, f"ETS - MAE: {mae:.2f}, RMSE: {rmse:.2f}", None
+        
+    except Exception as e:
+        return None, None, f"ETS forecasting error: {str(e)}"
+
+def create_theta_forecast(train_data, test_data, date_column, value_column):
+    """Theta method forecast (simplified version)"""
+    try:
+        values = train_data[value_column].values
+        
+        # Simple theta method implementation
+        # Theta = 2 gives more weight to long-term trend
+        theta = 2.0
+        
+        # Deseasonalize if possible
+        detrended = values.copy()
+        
+        # Simple linear trend
+        time_index = np.arange(len(values))
+        trend_coef = np.polyfit(time_index, values, 1)
+        linear_trend = np.polyval(trend_coef, time_index)
+        
+        # Apply theta transformation
+        theta_line = theta * linear_trend + (1 - theta) * values
+        
+        # Forecast using extrapolated trend
+        forecast_periods = len(test_data)
+        future_time = np.arange(len(values), len(values) + forecast_periods)
+        forecast_trend = np.polyval(trend_coef, future_time)
+        
+        # Simple forecasting
+        y_pred = forecast_trend
+        y_actual = test_data[value_column].values
+        
+        # Calculate metrics
+        mae = mean_absolute_error(y_actual, y_pred)
+        rmse = np.sqrt(mean_squared_error(y_actual, y_pred))
+        r2 = r2_score(y_actual, y_pred)
+        
+        # Confidence intervals
+        residual_std = np.std(values - linear_trend[:len(values)])
+        ci_50_lower = y_pred - 0.674 * residual_std
+        ci_50_upper = y_pred + 0.674 * residual_std
+        ci_80_lower = y_pred - 1.282 * residual_std
+        ci_80_upper = y_pred + 1.282 * residual_std
+        ci_95_lower = y_pred - 1.96 * residual_std
+        ci_95_upper = y_pred + 1.96 * residual_std
+        
+        forecast_data = {
+            'model_name': 'Theta Method',
+            'train_dates': train_data[date_column].dt.strftime('%Y-%m-%d').tolist(),
+            'train_values': train_data[value_column].tolist(),
+            'test_dates': test_data[date_column].dt.strftime('%Y-%m-%d').tolist(),
+            'test_actual': y_actual.tolist(),
+            'test_predicted': y_pred.tolist(),
+            'ci_50_lower': ci_50_lower.tolist(),
+            'ci_50_upper': ci_50_upper.tolist(),
+            'ci_80_lower': ci_80_lower.tolist(),
+            'ci_80_upper': ci_80_upper.tolist(),
+            'ci_95_lower': ci_95_lower.tolist(),
+            'ci_95_upper': ci_95_upper.tolist(),
+            'split_date': train_data[date_column].iloc[-1].strftime('%Y-%m-%d'),
+            'metrics': {
+                'mae': float(mae),
+                'rmse': float(rmse),
+                'r2': float(r2),
+                'mape': float(np.mean(np.abs((y_actual - y_pred) / y_actual)) * 100) if np.all(y_actual != 0) else None
+            },
+            'model_type': 'theta'
+        }
+        
+        return forecast_data, f"Theta - MAE: {mae:.2f}, RMSE: {rmse:.2f}", None
+        
+    except Exception as e:
+        return None, None, f"Theta forecasting error: {str(e)}"
+
+def create_moving_average_forecast(train_data, test_data, date_column, value_column):
+    """Moving average forecast with seasonal adjustment"""
+    try:
+        values = train_data[value_column].values
+        
+        # Adaptive window size based on data length
+        window_size = min(max(3, len(values) // 10), 30)
+        
+        # Calculate moving average
+        ma = pd.Series(values).rolling(window=window_size, min_periods=1).mean()
+        
+        # Calculate seasonal component if enough data
+        seasonal_period = min(12, len(values) // 3)
+        seasonal_component = 0
+        
+        if seasonal_period > 2 and len(values) >= seasonal_period * 2:
+            seasonal_values = []
+            for i in range(seasonal_period):
+                season_vals = values[i::seasonal_period]
+                if len(season_vals) > 0:
+                    seasonal_values.append(np.mean(season_vals) - np.mean(values))
+                else:
+                    seasonal_values.append(0)
+            
+            # Forecast with seasonality
+            predictions = []
+            last_ma = ma.iloc[-1]
+            
+            for i in range(len(test_data)):
+                seasonal_idx = (len(values) + i) % seasonal_period
+                seasonal_adj = seasonal_values[seasonal_idx] if seasonal_idx < len(seasonal_values) else 0
+                pred = last_ma + seasonal_adj
+                predictions.append(pred)
+        else:
+            # Simple moving average forecast
+            last_ma = ma.iloc[-1]
+            predictions = [last_ma] * len(test_data)
+        
+        y_pred = np.array(predictions)
+        y_actual = test_data[value_column].values
+        
+        # Calculate metrics
+        mae = mean_absolute_error(y_actual, y_pred)
+        rmse = np.sqrt(mean_squared_error(y_actual, y_pred))
+        r2 = r2_score(y_actual, y_pred)
+        
+        # Confidence intervals based on historical volatility
+        residual_std = pd.Series(values).rolling(window=window_size).std().iloc[-1]
+        if pd.isna(residual_std):
+            residual_std = np.std(values)
+            
+        ci_50_lower = y_pred - 0.674 * residual_std
+        ci_50_upper = y_pred + 0.674 * residual_std
+        ci_80_lower = y_pred - 1.282 * residual_std
+        ci_80_upper = y_pred + 1.282 * residual_std
+        ci_95_lower = y_pred - 1.96 * residual_std
+        ci_95_upper = y_pred + 1.96 * residual_std
+        
+        forecast_data = {
+            'model_name': f'Moving Average (window={window_size})',
+            'train_dates': train_data[date_column].dt.strftime('%Y-%m-%d').tolist(),
+            'train_values': train_data[value_column].tolist(),
+            'test_dates': test_data[date_column].dt.strftime('%Y-%m-%d').tolist(),
+            'test_actual': y_actual.tolist(),
+            'test_predicted': y_pred.tolist(),
+            'ci_50_lower': ci_50_lower.tolist(),
+            'ci_50_upper': ci_50_upper.tolist(),
+            'ci_80_lower': ci_80_lower.tolist(),
+            'ci_80_upper': ci_80_upper.tolist(),
+            'ci_95_lower': ci_95_lower.tolist(),
+            'ci_95_upper': ci_95_upper.tolist(),
+            'split_date': train_data[date_column].iloc[-1].strftime('%Y-%m-%d'),
+            'metrics': {
+                'mae': float(mae),
+                'rmse': float(rmse),
+                'r2': float(r2),
+                'mape': float(np.mean(np.abs((y_actual - y_pred) / y_actual)) * 100) if np.all(y_actual != 0) else None
+            },
+            'model_type': 'moving_average'
+        }
+        
+        return forecast_data, f"Moving Average - MAE: {mae:.2f}, RMSE: {rmse:.2f}", None
+        
+    except Exception as e:
+        return None, None, f"Moving Average forecasting error: {str(e)}"
+
+def create_naive_forecast(train_data, test_data, date_column, value_column):
+    """Naive forecast (last value repeated)"""
+    try:
+        last_value = train_data[value_column].iloc[-1]
+        y_pred = np.array([last_value] * len(test_data))
+        y_actual = test_data[value_column].values
+        
+        # Calculate metrics
+        mae = mean_absolute_error(y_actual, y_pred)
+        rmse = np.sqrt(mean_squared_error(y_actual, y_pred))
+        r2 = r2_score(y_actual, y_pred)
+        
+        # Confidence intervals based on historical volatility
+        historical_volatility = np.std(train_data[value_column].values)
+        
+        ci_50_lower = y_pred - 0.674 * historical_volatility
+        ci_50_upper = y_pred + 0.674 * historical_volatility
+        ci_80_lower = y_pred - 1.282 * historical_volatility
+        ci_80_upper = y_pred + 1.282 * historical_volatility
+        ci_95_lower = y_pred - 1.96 * historical_volatility
+        ci_95_upper = y_pred + 1.96 * historical_volatility
+        
+        forecast_data = {
+            'model_name': 'Naive (Last Value)',
+            'train_dates': train_data[date_column].dt.strftime('%Y-%m-%d').tolist(),
+            'train_values': train_data[value_column].tolist(),
+            'test_dates': test_data[date_column].dt.strftime('%Y-%m-%d').tolist(),
+            'test_actual': y_actual.tolist(),
+            'test_predicted': y_pred.tolist(),
+            'ci_50_lower': ci_50_lower.tolist(),
+            'ci_50_upper': ci_50_upper.tolist(),
+            'ci_80_lower': ci_80_lower.tolist(),
+            'ci_80_upper': ci_80_upper.tolist(),
+            'ci_95_lower': ci_95_lower.tolist(),
+            'ci_95_upper': ci_95_upper.tolist(),
+            'split_date': train_data[date_column].iloc[-1].strftime('%Y-%m-%d'),
+            'metrics': {
+                'mae': float(mae),
+                'rmse': float(rmse),
+                'r2': float(r2),
+                'mape': float(np.mean(np.abs((y_actual - y_pred) / y_actual)) * 100) if np.all(y_actual != 0) else None
+            },
+            'model_type': 'naive'
+        }
+        
+        return forecast_data, f"Naive - MAE: {mae:.2f}, RMSE: {rmse:.2f}", None
+        
+    except Exception as e:
+        return None, None, f"Naive forecasting error: {str(e)}"
+
+def create_naive_drift_forecast(train_data, test_data, date_column, value_column):
+    """Naive drift forecast (last value + average historical change)"""
+    try:
+        values = train_data[value_column].values
+        last_value = values[-1]
+        
+        # Calculate average drift (change per period)
+        if len(values) > 1:
+            drift = np.mean(np.diff(values))
+        else:
+            drift = 0
+        
+        # Generate predictions with drift
+        predictions = []
+        for i in range(len(test_data)):
+            pred = last_value + drift * (i + 1)
+            predictions.append(pred)
+        
+        y_pred = np.array(predictions)
+        y_actual = test_data[value_column].values
+        
+        # Calculate metrics
+        mae = mean_absolute_error(y_actual, y_pred)
+        rmse = np.sqrt(mean_squared_error(y_actual, y_pred))
+        r2 = r2_score(y_actual, y_pred)
+        
+        # Confidence intervals with increasing uncertainty
+        base_volatility = np.std(np.diff(values)) if len(values) > 1 else np.std(values)
+        
+        ci_50_lower = []
+        ci_50_upper = []
+        ci_80_lower = []
+        ci_80_upper = []
+        ci_95_lower = []
+        ci_95_upper = []
+        
+        for i in range(len(test_data)):
+            # Uncertainty increases with forecast horizon
+            uncertainty = base_volatility * np.sqrt(i + 1)
+            
+            ci_50_lower.append(y_pred[i] - 0.674 * uncertainty)
+            ci_50_upper.append(y_pred[i] + 0.674 * uncertainty)
+            ci_80_lower.append(y_pred[i] - 1.282 * uncertainty)
+            ci_80_upper.append(y_pred[i] + 1.282 * uncertainty)
+            ci_95_lower.append(y_pred[i] - 1.96 * uncertainty)
+            ci_95_upper.append(y_pred[i] + 1.96 * uncertainty)
+        
+        forecast_data = {
+            'model_name': 'Naive with Drift',
+            'train_dates': train_data[date_column].dt.strftime('%Y-%m-%d').tolist(),
+            'train_values': train_data[value_column].tolist(),
+            'test_dates': test_data[date_column].dt.strftime('%Y-%m-%d').tolist(),
+            'test_actual': y_actual.tolist(),
+            'test_predicted': y_pred.tolist(),
+            'ci_50_lower': ci_50_lower,
+            'ci_50_upper': ci_50_upper,
+            'ci_80_lower': ci_80_lower,
+            'ci_80_upper': ci_80_upper,
+            'ci_95_lower': ci_95_lower,
+            'ci_95_upper': ci_95_upper,
+            'split_date': train_data[date_column].iloc[-1].strftime('%Y-%m-%d'),
+            'metrics': {
+                'mae': float(mae),
+                'rmse': float(rmse),
+                'r2': float(r2),
+                'mape': float(np.mean(np.abs((y_actual - y_pred) / y_actual)) * 100) if np.all(y_actual != 0) else None,
+                'drift': float(drift)
+            },
+            'model_type': 'naive_drift'
+        }
+        
+        return forecast_data, f"Naive Drift - MAE: {mae:.2f}, RMSE: {rmse:.2f}, Drift: {drift:.4f}", None
+        
+    except Exception as e:
+        return None, None, f"Naive Drift forecasting error: {str(e)}"
+
+
 def analyze_time_series(df: pd.DataFrame, params: Dict) -> Dict:
     try:
-        """Enhanced time series analysis with decomposition and multi-series support"""
+        """Enhanced time series analysis with forecasting and detailed seasonality insights"""
         logging.info('start analyze time series')
         date_col = params.get('date_col', 'date')
         value_col = params.get('value_col', 'value')
         category_col = params.get('category_col', None)
+        model_type = params.get('model_type', 'linear_regression')  # Add model type parameter
         
         # Enhanced datetime parsing
         df[date_col] = parse_datetime_flexible(df[date_col])
@@ -758,13 +1541,124 @@ def analyze_time_series(df: pd.DataFrame, params: Dict) -> Dict:
         df_for_decomp = df.copy()
         df_for_decomp['days_from_start'] = (df_for_decomp[date_col] - df_for_decomp[date_col].min()).dt.days
         
-        # Multi time series support
+        # Enhanced seasonality analysis
+        def analyze_detailed_seasonality(data, date_column, value_column):
+            """Analyze seasonality patterns with detailed insights"""
+            seasonality_insights = []
+            
+            # Monthly analysis
+            data['month'] = data[date_column].dt.month
+            data['day_of_week'] = data[date_column].dt.day_of_week
+            data['day_of_year'] = data[date_column].dt.day_of_year
+            data['week_of_year'] = data[date_column].dt.isocalendar().week
+            
+            # Monthly seasonality
+            monthly_avg = data.groupby('month')[value_column].mean()
+            if len(monthly_avg) >= 12:
+                peak_month = monthly_avg.idxmax()
+                low_month = monthly_avg.idxmin()
+                month_names = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
+                              'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+                seasonality_insights.append(f"Monthly pattern: Peak in {month_names[peak_month]}, lowest in {month_names[low_month]}")
+                
+                # Calculate monthly seasonality strength
+                monthly_strength = monthly_avg.std() / monthly_avg.mean() if monthly_avg.mean() != 0 else 0
+                if monthly_strength > 0.2:
+                    seasonality_insights.append(f"Strong monthly seasonality detected (strength: {monthly_strength:.3f})")
+                else:
+                    seasonality_insights.append(f"Weak monthly seasonality (strength: {monthly_strength:.3f})")
+            
+            # Weekly seasonality
+            weekly_avg = data.groupby('day_of_week')[value_column].mean()
+            if len(weekly_avg) >= 7:
+                peak_day = weekly_avg.idxmax()
+                low_day = weekly_avg.idxmin()
+                day_names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+                seasonality_insights.append(f"Weekly pattern: Peak on {day_names[peak_day]}, lowest on {day_names[low_day]}")
+                
+                weekly_strength = weekly_avg.std() / weekly_avg.mean() if weekly_avg.mean() != 0 else 0
+                if weekly_strength > 0.1:
+                    seasonality_insights.append(f"Notable weekly seasonality (strength: {weekly_strength:.3f})")
+            
+            # Determine primary seasonality period
+            if len(data) >= 365:
+                seasonality_insights.append("Primary seasonality period: Annual (yearly patterns)")
+            elif len(data) >= 30:
+                seasonality_insights.append("Primary seasonality period: Monthly patterns")
+            elif len(data) >= 7:
+                seasonality_insights.append("Primary seasonality period: Weekly patterns")
+            else:
+                seasonality_insights.append("Insufficient data for reliable seasonality analysis")
+            
+            return seasonality_insights, monthly_strength if 'monthly_strength' in locals() else 0, weekly_strength if 'weekly_strength' in locals() else 0
+        
+        
+        # Predictability analysis
+        def analyze_predictability(data, value_column):
+            """Analyze how predictable the data is with detailed explanations"""
+            values = data[value_column].values
+            
+            # Calculate coefficient of variation
+            cv = np.std(values) / np.mean(values) if np.mean(values) != 0 else float('inf')
+            
+            # Random walk test (Ljung-Box test on first differences)
+            if len(values) > 10:
+                diffs = np.diff(values)
+                try:
+                    # Simple autocorrelation test
+                    autocorr_1 = np.corrcoef(diffs[:-1], diffs[1:])[0, 1] if len(diffs) > 1 else 0
+                    if np.isnan(autocorr_1):
+                        autocorr_1 = 0
+                    
+                    # Enhanced predictability categories with detailed explanations
+                    if cv < 0.1:
+                        predictability = "Very High - Data is very stable and predictable"
+                        cv_explanation = "Coefficient of Variation < 0.1 indicates extremely low volatility relative to the mean. The data varies less than 10% around its average value."
+                    elif cv < 0.3:
+                        predictability = "High - Data shows consistent patterns"
+                        cv_explanation = f"Coefficient of Variation = {cv:.3f} indicates low to moderate volatility. The data varies {cv*100:.1f}% around its average value."
+                    elif cv < 0.6:
+                        predictability = "Moderate - Some variability but patterns are detectable"
+                        cv_explanation = f"Coefficient of Variation = {cv:.3f} indicates moderate volatility. The data varies {cv*100:.1f}% around its average value."
+                    elif cv < 1.0:
+                        predictability = "Low - High variability makes forecasting challenging"
+                        cv_explanation = f"Coefficient of Variation = {cv:.3f} indicates high volatility. The data varies {cv*100:.1f}% around its average value."
+                    else:
+                        predictability = "Very Low - Data is highly volatile and unpredictable"
+                        cv_explanation = f"Coefficient of Variation = {cv:.3f} indicates very high volatility. The standard deviation is larger than the mean, suggesting extreme variability."
+                    
+                    # Enhanced random walk characteristics with explanations
+                    if abs(autocorr_1) < 0.1:
+                        random_walk_insight = "Data shows random walk characteristics - changes are largely unpredictable"
+                        rw_explanation = f"Autocorrelation = {autocorr_1:.3f} (close to 0) suggests that past changes don't predict future changes. Each period's change is essentially random."
+                    elif autocorr_1 > 0.3:
+                        random_walk_insight = "Data shows momentum - recent changes tend to continue"
+                        rw_explanation = f"Positive autocorrelation = {autocorr_1:.3f} indicates momentum effects. When the value increases, it tends to keep increasing (and vice versa)."
+                    elif autocorr_1 < -0.3:
+                        random_walk_insight = "Data shows mean reversion - tends to return to average after changes"
+                        rw_explanation = f"Negative autocorrelation = {autocorr_1:.3f} indicates mean reversion. After moving away from the average, the data tends to move back toward it."
+                    else:
+                        random_walk_insight = "Data shows weak autocorrelation patterns"
+                        rw_explanation = f"Autocorrelation = {autocorr_1:.3f} indicates weak but detectable patterns in how changes follow each other."
+                    
+                    return predictability, random_walk_insight, float(cv), cv_explanation, rw_explanation
+                    
+                except:
+                    return "Cannot determine - insufficient variation in data", "Analysis inconclusive", float(cv), "Unable to calculate due to insufficient data variation", "Unable to analyze autocorrelation patterns"
+            else:
+                return "Cannot determine - insufficient data points", "Need more data for analysis", float(cv), "Need at least 10 data points for reliable analysis", "Need more data points to detect patterns"
+
+
+
+        # Multi time series support with category
         if category_col and category_col in df.columns:
             logging.info('analyze with category col')
             # Analyze by category
             categories = df[category_col].unique()
             category_stats = {}
             category_decompositions = {}
+            category_forecasts = {}
+            category_seasonality_insights = {}
             
             for cat in categories:
                 cat_data = df[df[category_col] == cat].copy()
@@ -776,17 +1670,36 @@ def analyze_time_series(df: pd.DataFrame, params: Dict) -> Dict:
                     else:
                         slope = 0
                     
+                    # Predictability analysis
+                    predictability, random_walk_insight, cv, cv_explanation, rw_explanation = analyze_predictability(cat_data, value_col)
+                    
                     category_stats[cat] = {
                         "mean": clean_float(cat_data[value_col].mean()),
                         "std": clean_float(cat_data[value_col].std()),
                         "min": clean_float(cat_data[value_col].min()),
                         "max": clean_float(cat_data[value_col].max()),
                         "trend_slope": clean_float(slope),
-                        "trend": "increasing" if slope > 0 else "decreasing" if slope < 0 else "stable"
+                        "trend": "increasing" if slope > 0 else "decreasing" if slope < 0 else "stable",
+                        "predictability": predictability,
+                        "random_walk_insight": random_walk_insight,
+                        "coefficient_variation": clean_float(cv)
                     }
                     
+                    # Seasonality analysis per category
+                    if len(cat_data) >= 7:
+                        seasonality_insights, monthly_strength, weekly_strength = analyze_detailed_seasonality(cat_data, date_col, value_col)
+                        category_seasonality_insights[cat] = seasonality_insights
+                    else:
+                        category_seasonality_insights[cat] = ["Insufficient data for seasonality analysis"]
+                    
+                    # Forecasting per category with selected model
+                    if len(cat_data) >= 10:
+                        forecast_data, forecast_insight, forecast_error = create_forecast(cat_data, date_col, value_col, model_type=model_type)
+                        if forecast_data:
+                            category_forecasts[cat] = forecast_data
+                    
                     # Decomposition for each category
-                    if len(cat_data) >= 10:  # Need minimum data points
+                    if len(cat_data) >= 10:
                         cat_data_sorted = cat_data.sort_values(date_col).reset_index(drop=True)
                         
                         # Simple trend calculation using linear regression
@@ -815,6 +1728,12 @@ def analyze_time_series(df: pd.DataFrame, params: Dict) -> Dict:
             else:
                 overall_slope = 0
             
+            # Overall predictability
+            overall_predictability, overall_random_walk, overall_cv, overall_cv_explanation, overall_rw_explanation = analyze_predictability(df, value_col)
+            
+            # Overall seasonality insights
+            overall_seasonality_insights, monthly_strength, weekly_strength = analyze_detailed_seasonality(df, date_col, value_col)
+            
             stats = {
                 "mean": clean_float(df[value_col].mean()),
                 "std": clean_float(df[value_col].std()),
@@ -822,7 +1741,10 @@ def analyze_time_series(df: pd.DataFrame, params: Dict) -> Dict:
                 "max": clean_float(df[value_col].max()),
                 "trend_slope": clean_float(overall_slope),
                 "trend": "increasing" if overall_slope > 0 else "decreasing" if overall_slope < 0 else "stable",
-                "categories": category_stats
+                "categories": category_stats,
+                "predictability": overall_predictability,
+                "random_walk_insight": overall_random_walk,
+                "coefficient_variation": clean_float(overall_cv)
             }
             
             # Create multi-line plot with enhanced styling
@@ -839,6 +1761,7 @@ def analyze_time_series(df: pd.DataFrame, params: Dict) -> Dict:
             
             # Add overall decomposition
             overall_decomposition = None
+            overall_forecast = None
             if len(df) >= 10:
                 df_sorted = df.sort_values(date_col).reset_index(drop=True)
                 x_vals = np.arange(len(df_sorted))
@@ -858,6 +1781,11 @@ def analyze_time_series(df: pd.DataFrame, params: Dict) -> Dict:
                     'seasonal': seasonal_smooth.tolist()
                 }
                 
+                # Overall forecast with selected model
+                forecast_data, forecast_insight, forecast_error = create_forecast(df_sorted, date_col, value_col, model_type=model_type)
+                if forecast_data:
+                    overall_forecast = forecast_data
+                
         else:
             logging.info('analyze without category col')
             # Single time series analysis
@@ -868,6 +1796,12 @@ def analyze_time_series(df: pd.DataFrame, params: Dict) -> Dict:
             else:
                 slope = 0
             
+            # Predictability analysis
+            predictability, random_walk_insight, cv, cv_explanation, rw_explanation = analyze_predictability(df, value_col)
+            
+            # Seasonality insights
+            seasonality_insights, monthly_strength, weekly_strength = analyze_detailed_seasonality(df, date_col, value_col)
+            
             # Basic statistics
             stats = {
                 "mean": float(df[value_col].mean()),
@@ -875,7 +1809,10 @@ def analyze_time_series(df: pd.DataFrame, params: Dict) -> Dict:
                 "min": float(df[value_col].min()),
                 "max": float(df[value_col].max()),
                 "trend_slope": float(slope),
-                "trend": "increasing" if slope > 0 else "decreasing" if slope < 0 else "stable"
+                "trend": "increasing" if slope > 0 else "decreasing" if slope < 0 else "stable",
+                "predictability": predictability,
+                "random_walk_insight": random_walk_insight,
+                "coefficient_variation": float(cv)
             }
             logging.info('analyze without category col finish')
             
@@ -891,9 +1828,12 @@ def analyze_time_series(df: pd.DataFrame, params: Dict) -> Dict:
             )
             fig.update_traces(line=dict(color='#3B82F6', width=2))
             
-            # Single series decomposition
+            # Single series decomposition and forecast
             category_decompositions = {}
+            category_forecasts = {}
+            category_seasonality_insights = {}
             overall_decomposition = None
+            overall_forecast = None
             
             if len(df) >= 10:
                 df_sorted = df.sort_values(date_col).reset_index(drop=True)
@@ -913,6 +1853,11 @@ def analyze_time_series(df: pd.DataFrame, params: Dict) -> Dict:
                     'trend': trend_line.tolist(),
                     'seasonal': seasonal_smooth.tolist()
                 }
+                
+                # Create forecast with selected model
+                forecast_data, forecast_insight, forecast_error = create_forecast(df_sorted, date_col, value_col, model_type=model_type)
+                if forecast_data:
+                    overall_forecast = forecast_data
         
         plot_json = fig.to_json()
         
@@ -946,14 +1891,23 @@ def analyze_time_series(df: pd.DataFrame, params: Dict) -> Dict:
             growth_rate = 0
         
         logging.info('creating insight')
+        
+        # Enhanced insights with seasonality and predictability information
         insights = [
             f"Average value: {stats['mean']:.2f}",
             f"Overall trend: {stats['trend']} (slope: {stats['trend_slope']:.4f} per day)",
-            f"Seasonality strength: {'High' if seasonality_strength > 0.3 else 'Moderate' if seasonality_strength > 0.15 else 'Low'} ({seasonality_strength:.3f})",
+            f"Predictability: {stats['predictability']}",
+            f"Random walk analysis: {stats['random_walk_insight']}",
             f"Data span: {df[date_col].min().strftime('%Y-%m-%d')} to {df[date_col].max().strftime('%Y-%m-%d')}",
             f"Total growth: {growth_rate:.1f}%",
-            f"Volatility: {'High' if volatility > 0.5 else 'Moderate' if volatility > 0.2 else 'Low'} ({volatility:.3f})"
+            f"Volatility: {'High' if volatility > 0.5 else 'Moderate' if volatility > 0.2 else 'Low'} (CV: {volatility:.3f})"
         ]
+        
+        # Add seasonality insights to main insights
+        if category_col and category_col in df.columns:
+            insights.extend(overall_seasonality_insights[:2])  # Add first 2 seasonality insights
+        else:
+            insights.extend(seasonality_insights[:2])  # Add first 2 seasonality insights
         
         logging.info(f"stats: {stats}")
         logging.info(f"plot_json type: {type(plot_json)}")
@@ -970,8 +1924,13 @@ def analyze_time_series(df: pd.DataFrame, params: Dict) -> Dict:
             "growth_rate": growth_rate,
             "has_categories": category_col is not None and category_col in df.columns,
             "category_decompositions": category_decompositions,
+            "category_forecasts": category_forecasts,
+            "category_seasonality_insights": category_seasonality_insights,
             "overall_decomposition": overall_decomposition,
-            "categories_list": list(categories) if category_col and category_col in df.columns else []
+            "overall_forecast": overall_forecast,
+            "categories_list": list(categories) if category_col and category_col in df.columns else [],
+            "seasonality_insights": overall_seasonality_insights if category_col and category_col in df.columns else seasonality_insights,
+            "selected_model": model_type  # Add selected model info
         }
     
         return sanitize_for_json(response_data)

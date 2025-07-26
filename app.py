@@ -6,6 +6,9 @@ import json
 from datetime import datetime
 import io
 import logging, sys
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import mean_absolute_error, mean_squared_error
+import plotly.express as px
 
 # Hapus handler lama (bawaan Streamlit)
 for handler in logging.root.handlers[:]:
@@ -316,13 +319,22 @@ with tab2:
                 value_col = st.selectbox("📈 Select Value Column:", 
                                        [col for col in columns if col != datetime_col])
                 
-                # Tambahan: Category column untuk multi time series
-                category_col = st.selectbox("🏷️ Select Category Column (Optional):", 
-                                          ["None"] + [col for col in columns if col not in [datetime_col, value_col]],
-                                          help="Optional: Select a category column for multi-line time series analysis")
+                # Enhanced Category column selection with better UX
+                st.markdown("### 🏷️ Category Analysis (Optional)")
+                enable_category = st.checkbox("Enable multi-category analysis", 
+                                            help="Analyze multiple time series by category/group")
                 
-                if category_col == "None":
-                    category_col = None
+                category_col = None
+                if enable_category:
+                    category_col = st.selectbox("Select Category Column:", 
+                                              [col for col in columns if col not in [datetime_col, value_col]],
+                                              help="Select a column to group your time series by categories")
+                    
+                    # Show category preview
+                    if category_col:
+                        unique_categories = st.session_state.current_data[category_col].unique()
+                        st.info(f"📋 Found {len(unique_categories)} categories: {', '.join(map(str, unique_categories[:5]))}" + 
+                               (f" and {len(unique_categories)-5} more..." if len(unique_categories) > 5 else ""))
                 
                 # Check if aggregation is needed
                 st.subheader("🔄 Data Aggregation")
@@ -347,7 +359,7 @@ with tab2:
                                 "value_col": value_col,
                                 "agg_method": agg_method,
                                 "freq": freq,
-                                "category_col": category_col  # Tambahan
+                                "category_col": category_col
                             }
                             response = requests.post(f"{API_BASE_URL}/aggregate-data", json=payload)
                             
@@ -356,7 +368,6 @@ with tab2:
                                 st.session_state.current_session_id = agg_data['session_id']
                                 st.session_state.current_data = pd.DataFrame(agg_data['data'])
                                 st.success("✅ Data aggregated successfully!")
-                                # Update category_col untuk analisis berikutnya
                                 if agg_data.get('has_category', False):
                                     category_col = 'category'
                                 else:
@@ -405,7 +416,7 @@ with tab2:
                     'date_col': 'date' if needs_agg and 'needs_agg' in locals() else datetime_col,
                     'value_col': 'value' if needs_agg and 'needs_agg' in locals() else value_col
                 }
-                # Tambahan category_col ke parameters
+                # Add category_col to parameters
                 if category_col:
                     analysis_params['category_col'] = 'category' if needs_agg and 'needs_agg' in locals() else category_col
                     
@@ -423,28 +434,350 @@ with tab2:
             if analysis_ready:
                 st.markdown('<div class="success-box">✅ Ready for analysis!</div>', unsafe_allow_html=True)
                 
-                if st.button("🚀 Run Analysis", type="primary"):
-                    with st.spinner("Running analysis..."):
-                        payload = {
-                            "session_id": st.session_state.current_session_id,
-                            "module": module,
-                            "parameters": analysis_params
-                        }
-                        response = requests.post(f"{API_BASE_URL}/analyze", json=payload)
-                        logging.info(payload)
-
-                        logging.info('response analysis')
-                        logging.info(response)
+                # Model Selection for Time Series
+                if module == "time_series":
+                    st.markdown("### 🔮 Analysis Options")
+                    
+                    # TAMBAHKAN: Forecast toggle option
+                    enable_forecast = st.checkbox(
+                        "🔮 Enable Forecasting Analysis", 
+                        value=True,
+                        help="Enable this to include forecast analysis with your time series. Disable for faster analysis."
+                    )
+                    
+                    if enable_forecast:
+                        st.markdown("### 📊 Forecasting Model Selection")
                         
-                        if response.status_code == 200:
-                            st.session_state.analysis_results = response.json()
-                            st.success("✅ Analysis completed!")
-                            st.rerun()
+                        # Model categories
+                        model_category = st.radio(
+                            "Choose model category:",
+                            ["Machine Learning", "Statistical Methods"],
+                            help="Machine Learning models can capture complex patterns, while Statistical methods are more interpretable"
+                        )
+                        
+                        if model_category == "Machine Learning":
+                            model_options = {
+                                'linear_regression': '📈 Linear Regression (with features)',
+                                'random_forest': '🌳 Random Forest',
+                                'catboost': '🚀 CatBoost (Gradient Boosting)'
+                            }
+                            default_model = 'random_forest'
                         else:
-                            st.error(f"❌ Analysis failed: {response.text}")
+                            model_options = {
+                                'arima': '📊 ARIMA (Auto-Regressive)',
+                                'ets': '📈 ETS (Exponential Smoothing)',
+                                'theta': '🎯 Theta Method',
+                                'moving_average': '📉 Moving Average',
+                                'naive': '➡️ Naive (Last Value)',
+                                'naive_drift': '📈 Naive with Drift'
+                            }
+                            default_model = 'ets'
+                        
+                        model_type = st.selectbox(
+                            "Select forecasting model:",
+                            list(model_options.keys()),
+                            format_func=lambda x: model_options[x],
+                            index=list(model_options.keys()).index(default_model)
+                        )
+                        
+                        # Model descriptions 
+                        model_descriptions = {
+                            'linear_regression': {
+                                'description': 'Linear regression with time-based and seasonal features',
+                                'pros': ['Fast and interpretable', 'Good for linear trends', 'Handles seasonality with feature engineering'],
+                                'cons': ['Limited for complex non-linear patterns', 'Assumes linear relationships'],
+                                'best_for': 'Data with clear linear trends and seasonal patterns'
+                            },
+                            'random_forest': {
+                                'description': 'Ensemble of decision trees with time and seasonal features',
+                                'pros': ['Captures complex patterns', 'Handles seasonality well', 'Feature importance available'],
+                                'cons': ['Less interpretable', 'Can overfit with small datasets'],
+                                'best_for': 'Complex data with non-linear patterns and strong seasonality'
+                            },
+                            'catboost': {
+                                'description': 'Advanced gradient boosting optimized for categorical features',
+                                'pros': ['Excellent for complex patterns', 'Handles seasonality automatically', 'Very accurate'],
+                                'cons': ['Longer training time', 'Requires more data', 'Less interpretable'],
+                                'best_for': 'Large datasets with complex seasonal and trend patterns'
+                            },
+                            'arima': {
+                                'description': 'Auto-Regressive Integrated Moving Average (simplified implementation)',
+                                'pros': ['Good for trend patterns', 'Statistically sound', 'Works with limited data'],
+                                'cons': ['Limited seasonality handling', 'Assumes stationarity'],
+                                'best_for': 'Data with clear trends but limited seasonal patterns'
+                            },
+                            'ets': {
+                                'description': 'Exponential Smoothing with Trend and Seasonality',
+                                'pros': ['Excellent for seasonal data', 'Adaptive to changes', 'Interpretable'],
+                                'cons': ['Limited for complex patterns', 'Sensitive to outliers'],
+                                'best_for': 'Data with strong seasonal patterns and moderate trends'
+                            },
+                            'theta': {
+                                'description': 'Theta method combining trend extrapolation with seasonality',
+                                'pros': ['Good balance of simplicity and accuracy', 'Handles trends well'],
+                                'cons': ['Limited seasonal handling', 'Simple approach'],
+                                'best_for': 'Data with strong trends but moderate seasonality'
+                            },
+                            'moving_average': {
+                                'description': 'Weighted average of recent values with seasonal adjustment',
+                                'pros': ['Simple and robust', 'Good for stable patterns', 'Handles seasonal data'],
+                                'cons': ['Slow to adapt to changes', 'Limited trend handling'],
+                                'best_for': 'Stable data with consistent seasonal patterns'
+                            },
+                            'naive': {
+                                'description': 'Uses the last observed value as forecast (baseline model)',
+                                'pros': ['Very simple', 'Good baseline', 'Fast computation'],
+                                'cons': ['No trend or seasonality', 'Poor for changing data'],
+                                'best_for': 'Baseline comparison or very stable data'
+                            },
+                            'naive_drift': {
+                                'description': 'Naive method with linear drift based on historical average change',
+                                'pros': ['Simple with trend', 'Good baseline', 'Fast computation'],
+                                'cons': ['Linear assumption only', 'No seasonality'],
+                                'best_for': 'Data with consistent linear trends'
+                            }
+                        }
+                        
+                        # Show model description
+                        if model_type in model_descriptions:
+                            desc = model_descriptions[model_type]
+                            
+                            with st.expander(f"ℹ️ About {model_options[model_type]}", expanded=False):
+                                st.write(f"**Description:** {desc['description']}")
+                                
+                                col_pros, col_cons = st.columns(2)
+                                with col_pros:
+                                    st.write("**✅ Pros:**")
+                                    for pro in desc['pros']:
+                                        st.write(f"• {pro}")
+                                
+                                with col_cons:
+                                    st.write("**⚠️ Cons:**")
+                                    for con in desc['cons']:
+                                        st.write(f"• {con}")
+                                
+                                st.info(f"**🎯 Best for:** {desc['best_for']}")
+                        
+                        # Add model type to parameters
+                        analysis_params['model_type'] = model_type
+                    else:
+                        # Set default values when forecast is disabled
+                        analysis_params['model_type'] = None
+                        model_options = {}
+                    
+                    # Add forecast flag to parameters
+                    analysis_params['enable_forecast'] = enable_forecast
+
+                if enable_forecast:
+                    # Quick Model Comparison Feature
+                    st.markdown("---")
+                    st.markdown("### ⚡ Quick Model Comparison")
+                    
+                    compare_models = st.checkbox(
+                        "🔄 Compare multiple models", 
+                        value=False,
+                        help="Run analysis with multiple models and compare their performance (takes longer)"
+                    )
+                    
+                    if compare_models:
+                        st.info("🔄 **Model Comparison Mode**: This will test multiple models and show you a comparison table.")
+                        
+                        if model_category == "Machine Learning":
+                            comparison_models = ['linear_regression', 'random_forest', 'catboost']
+                        else:
+                            comparison_models = ['ets', 'arima', 'theta', 'moving_average', 'naive_drift']
+                        
+                        # Show which models will be compared
+                        model_names = [model_options[m] for m in comparison_models]
+                        st.write(f"**Models to compare:** {', '.join(model_names)}")
+                        
+                        # Update analysis params for comparison
+                        analysis_params['compare_models'] = True
+                        analysis_params['comparison_models'] = comparison_models
+                    else:
+                        analysis_params['compare_models'] = False
+                
+               # Enhanced analysis button with model info
+                if enable_forecast and analysis_params.get('compare_models', False):
+                    button_text = "🚀 Run Analysis & Compare Models"
+                elif enable_forecast:
+                    button_text = f"🚀 Run Analysis with Forecast ({model_options[model_type]})"
+                else:
+                    button_text = "🚀 Run Analysis (No Forecast)"
+
+
+                if module == "time_series":
+                    if enable_forecast:
+                        button_text += f" ({model_options[model_type]})"
+                
+                if st.button(button_text, type="primary", use_container_width=True):
+                    if analysis_params.get('compare_models', False):
+                        # Model comparison mode
+                        with st.spinner("🔄 Comparing multiple models... This will take a few moments."):
+                            payload = {
+                                "session_id": st.session_state.current_session_id,
+                                "module": module,
+                                "parameters": analysis_params
+                            }
+                            
+                            # First run model comparison
+                            comparison_response = requests.post(f"{API_BASE_URL}/compare-models", json=payload)
+                            
+                            if comparison_response.status_code == 200:
+                                comparison_results = comparison_response.json()
+                                st.session_state.model_comparison = comparison_results
+                                
+                                # Show comparison results immediately
+                                st.success("✅ Model comparison completed!")
+                                
+                                # Display comparison table
+                                st.subheader("📊 Model Performance Comparison")
+                                
+                                comparison_table = comparison_results['comparison_table']
+                                successful_models = [m for m in comparison_table if m['status'] == 'success']
+                                
+                                if successful_models:
+                                    # Create DataFrame for display
+                                    import pandas as pd
+                                    df_comparison = pd.DataFrame(successful_models)
+                                    
+                                    # Format the dataframe for better display
+                                    display_df = df_comparison[['rank', 'model', 'mae', 'rmse', 'r2', 'mape', 'directional_accuracy']].copy()
+                                    
+                                    # Round numeric columns
+                                    numeric_cols = ['mae', 'rmse', 'r2', 'mape', 'directional_accuracy']
+                                    for col in numeric_cols:
+                                        if col in display_df.columns:
+                                            display_df[col] = display_df[col].apply(lambda x: f"{x:.3f}" if x is not None else "N/A")
+                                    
+                                    # Rename columns for display
+                                    display_df.columns = ['Rank', 'Model', 'MAE', 'RMSE', 'R²', 'MAPE (%)', 'Direction Acc (%)']
+                                    
+                                    st.dataframe(display_df, use_container_width=True)
+                                    
+                                    # Highlight best model
+                                    best_model = comparison_results['best_model']
+                                    st.markdown(f"""
+                                    <div class="success-box">
+                                        🏆 <strong>Best Model:</strong> {best_model['model_name']}<br>
+                                        📊 <strong>MAE:</strong> {best_model['mae']:.3f} | 
+                                        <strong>RMSE:</strong> {best_model['rmse']:.3f}
+                                        {f" | <strong>R²:</strong> {best_model['r2']:.3f}" if best_model.get('r2') is not None else ""}
+                                        {f" | <strong>MAPE:</strong> {best_model['mape']:.1f}%" if best_model.get('mape') is not None else ""}
+                                    </div>
+                                    """, unsafe_allow_html=True)
+                                    
+                                    # Show failed models if any
+                                    failed_models = [m for m in comparison_table if m['status'] == 'failed']
+                                    if failed_models:
+                                        st.warning(f"⚠️ {len(failed_models)} model(s) failed to run:")
+                                        for failed in failed_models:
+                                            st.error(f"❌ {failed['model']}: {failed.get('error', 'Unknown error')}")
+                                    
+                                    # Option to run detailed analysis with best model
+                                    st.markdown("---")
+                                    col_auto, col_manual = st.columns(2)
+                                    
+                                    with col_auto:
+                                        if st.button(f"🚀 Run Full Analysis with Best Model ({best_model['model_name']})", type="primary"):
+                                            # Update parameters with best model
+                                            analysis_params['model_type'] = best_model['model_key']
+                                            analysis_params['compare_models'] = False
+                                            
+                                            payload_full = {
+                                                "session_id": st.session_state.current_session_id,
+                                                "module": module,
+                                                "parameters": analysis_params
+                                            }
+                                            
+                                            with st.spinner("🔄 Running full analysis with best model..."):
+                                                response = requests.post(f"{API_BASE_URL}/analyze", json=payload_full)
+                                                
+                                                if response.status_code == 200:
+                                                    st.session_state.analysis_results = response.json()
+                                                    st.success(f"✅ Full analysis completed with {best_model['model_name']}!")
+                                                    st.balloons()
+                                                    st.info("📊 **Analysis complete!** Check the **Analysis Results** tab.")
+                                                    time.sleep(1)
+                                                    st.rerun()
+                                                else:
+                                                    st.error(f"❌ Full analysis failed: {response.text}")
+                                    
+                                    with col_manual:
+                                        # Manual model selection
+                                        manual_model = st.selectbox(
+                                            "Or choose a specific model:",
+                                            options=[m['model_key'] for m in successful_models],
+                                            format_func=lambda x: next(m['model'] for m in successful_models if m['model_key'] == x),
+                                            key="manual_model_select"
+                                        )
+                                        
+                                        if st.button(f"🎯 Run with Selected Model", type="secondary"):
+                                            analysis_params['model_type'] = manual_model
+                                            analysis_params['compare_models'] = False
+                                            
+                                            payload_manual = {
+                                                "session_id": st.session_state.current_session_id,
+                                                "module": module,
+                                                "parameters": analysis_params
+                                            }
+                                            
+                                            with st.spinner("🔄 Running analysis with selected model..."):
+                                                response = requests.post(f"{API_BASE_URL}/analyze", json=payload_manual)
+                                                
+                                                if response.status_code == 200:
+                                                    st.session_state.analysis_results = response.json()
+                                                    selected_model_name = next(m['model'] for m in successful_models if m['model_key'] == manual_model)
+                                                    st.success(f"✅ Analysis completed with {selected_model_name}!")
+                                                    st.balloons()
+                                                    st.info("📊 **Analysis complete!** Check the **Analysis Results** tab.")
+                                                    time.sleep(1)
+                                                    st.rerun()
+                                                else:
+                                                    st.error(f"❌ Analysis failed: {response.text}")
+                                
+                                else:
+                                    st.error("❌ All models failed to run. Please check your data quality.")
+                            else:
+                                st.error(f"❌ Model comparison failed: {comparison_response.text}")
+                    
+                    else:
+                        # Single model mode (original logic)
+                        with st.spinner("🔄 Running comprehensive analysis... This may take a moment."):
+                            payload = {
+                                "session_id": st.session_state.current_session_id,
+                                "module": module,
+                                "parameters": analysis_params
+                            }
+                            response = requests.post(f"{API_BASE_URL}/analyze", json=payload)
+                            logging.info(payload)
+
+                            logging.info('response analysis')
+                            logging.info(response)
+                            
+                            if response.status_code == 200:
+                                st.session_state.analysis_results = response.json()
+                                
+                                # Enhanced success message with model info
+                                success_msg = "✅ Analysis completed successfully!"
+                                if module == "time_series":
+                                    success_msg += f" Using {model_options[model_type]} for forecasting."
+                                
+                                st.success(success_msg)
+                                st.balloons()  # Add celebration effect
+                                
+                                # Auto-switch to results tab message
+                                st.info("📊 **Analysis complete!** Please check the **Analysis Results** tab to view your insights, charts, and forecasts.")
+                                
+                                # Add a small delay and rerun to refresh the UI
+                                import time
+                                time.sleep(1)
+                                st.rerun()
+                            else:
+                                st.error(f"❌ Analysis failed: {response.text}")
+            
             else:
                 st.warning("⚠️ Please configure all required columns")
-
 
 # Tab 3: Analysis Results - Enhanced with filters and decomposition
 with tab3:
@@ -455,7 +788,7 @@ with tab3:
     else:
         results = st.session_state.analysis_results
         
-        # Display insights with enhanced styling
+        # Enhanced insights section with seasonality details
         st.subheader("💡 Key Insights", help="AI-generated insights based on your data analysis")
         
         insight_container = st.container()
@@ -467,11 +800,18 @@ with tab3:
                 </div>
                 """, unsafe_allow_html=True)
         
+        # Add detailed seasonality insights if available
+        if results['module'] == 'time_series' and results.get('seasonality_insights'):
+            with st.expander("🌊 Detailed Seasonality Analysis", expanded=False):
+                seasonality_insights = results['seasonality_insights']
+                for insight in seasonality_insights:
+                    st.markdown(f"• {insight}")
+        
         # Enhanced visualization section for time series
         if results['module'] == 'time_series':
             st.subheader("📈 Interactive Visualization")
             
-            # Category filter (if categories exist)
+            # Category dropdown filter (if categories exist)
             if results.get('has_categories', False):
                 st.markdown("""
                 <div class="filter-container">
@@ -481,80 +821,108 @@ with tab3:
                 
                 categories_list = results.get('categories_list', [])
                 
-                col_filter1, col_filter2 = st.columns([2, 1])
+                col_filter1, col_filter2 = st.columns([3, 1])
                 with col_filter1:
+                    # Enhanced dropdown multiselect for categories
                     selected_categories = st.multiselect(
                         "Select categories to display:",
                         options=categories_list,
                         default=categories_list,
-                        help="Choose which categories to show in the chart"
+                        help="Choose which categories to show in the chart. You can select multiple categories."
                     )
                 
                 with col_filter2:
-                    show_all_categories = st.checkbox(
-                        "Show all categories", 
-                        value=True,
-                        help="Toggle to show/hide all categories at once"
-                    )
-                    
-                    if show_all_categories:
+                    # Quick selection buttons
+                    if st.button("Select All", use_container_width=True):
                         selected_categories = categories_list
+                        st.rerun()
+                    
+                    if st.button("Clear All", use_container_width=True):
+                        selected_categories = []
+                        st.rerun()
             else:
                 selected_categories = []
             
-            # Decomposition options
+            # Enhanced chart options
             st.markdown("""
             <div class="decomposition-container">
-                <h4 style="margin-top: 0; color: #e65100;">📊 Time Series Decomposition</h4>
+                <h4 style="margin-top: 0; color: #e65100;">📊 Chart Options & Analysis Tools</h4>
             </div>
             """, unsafe_allow_html=True)
             
-            col_decomp1, col_decomp2, col_decomp3 = st.columns(3)
+            col_options1, col_options2, col_options3 = st.columns(3)
             
-            with col_decomp1:
+            with col_options1:
                 show_decomposition = st.checkbox(
-                    "Show Decomposition Charts", 
+                    "📈 Show Decomposition Charts", 
                     value=False,
                     help="Display separate charts for trend and seasonal components"
                 )
-            
-            with col_decomp2:
+                
                 show_trend_overlay = st.checkbox(
-                    "Show Trend Line on Main Chart", 
+                    "📉 Show Trend Line", 
                     value=False,
-                    help="Add gray trend line to main chart for comparison"
+                    help="Add trend line overlay to main chart"
                 )
             
-            with col_decomp3:
+            with col_options2:
                 show_seasonal_overlay = st.checkbox(
-                    "Show Seasonal Pattern on Main Chart", 
+                    "🌊 Show Seasonal Pattern", 
                     value=False,
-                    help="Add gray seasonal line to main chart"
+                    help="Add seasonal pattern overlay to main chart"
                 )
+                
+                # Enhanced forecasting options - HANYA jika ada forecast data
+                if results.get('overall_forecast') or results.get('category_forecasts'):
+                    show_forecast = st.checkbox(
+                        "🔮 Show Forecast", 
+                        value=False,
+                        help="Display forecast for the last 20% of data with prediction intervals"
+                    )
+                else:
+                    show_forecast = False
+                    st.markdown("*🔮 Forecast: Not available (disabled in analysis)*")
             
-            # Main chart
+            with col_options3:
+                if show_forecast and (results.get('overall_forecast') or results.get('category_forecasts')):
+                    show_confidence_intervals = st.checkbox(
+                        "📊 Show Confidence Intervals", 
+                        value=True,
+                        help="Display 50% and 80% confidence intervals for forecasts"
+                    )
+                    
+                    forecast_transparency = st.slider(
+                        "Forecast Transparency",
+                        min_value=0.1,
+                        max_value=1.0,
+                        value=0.7,
+                        step=0.1,
+                        help="Adjust transparency of forecast visualization"
+                    )
+                else:
+                    show_confidence_intervals = False
+                    forecast_transparency = 0.7
+            
+            # Main chart with enhanced features
             if 'plot' in results:
                 fig_dict = json.loads(results['plot'])
                 fig = go.Figure(fig_dict)
                 
                 # Apply category filter
                 if results.get('has_categories', False) and selected_categories:
-                    # Remove traces not in selected categories
                     filtered_data = []
                     for trace in fig.data:
                         if hasattr(trace, 'name') and trace.name in selected_categories:
                             filtered_data.append(trace)
-                        elif not hasattr(trace, 'name'):  # Handle cases without names
+                        elif not hasattr(trace, 'name'):
                             filtered_data.append(trace)
-                    
                     fig.data = filtered_data
                 
-                # Add trend overlay if requested
+                # Add trend overlay
                 if show_trend_overlay:
                     decomp_data = results.get('overall_decomposition') or results.get('category_decompositions', {})
                     
                     if results.get('overall_decomposition'):
-                        # Single series trend
                         fig.add_trace(go.Scatter(
                             x=pd.to_datetime(decomp_data['dates']),
                             y=decomp_data['trend'],
@@ -564,7 +932,6 @@ with tab3:
                             hovertemplate='Trend: %{y:.2f}<extra></extra>'
                         ))
                     elif selected_categories and results.get('category_decompositions'):
-                        # Multi-series trend
                         for cat in selected_categories:
                             if cat in results['category_decompositions']:
                                 cat_decomp = results['category_decompositions'][cat]
@@ -577,12 +944,11 @@ with tab3:
                                     hovertemplate=f'{cat} Trend: %{{y:.2f}}<extra></extra>'
                                 ))
                 
-                # Add seasonal overlay if requested
+                # Add seasonal overlay
                 if show_seasonal_overlay:
                     decomp_data = results.get('overall_decomposition') or results.get('category_decompositions', {})
                     
                     if results.get('overall_decomposition'):
-                        # Single series seasonal (offset to show pattern)
                         seasonal_offset = np.array(decomp_data['seasonal']) + np.mean(decomp_data['original'])
                         fig.add_trace(go.Scatter(
                             x=pd.to_datetime(decomp_data['dates']),
@@ -593,7 +959,6 @@ with tab3:
                             hovertemplate='Seasonal: %{y:.2f}<extra></extra>'
                         ))
                     elif selected_categories and results.get('category_decompositions'):
-                        # Multi-series seasonal
                         for cat in selected_categories:
                             if cat in results['category_decompositions']:
                                 cat_decomp = results['category_decompositions'][cat]
@@ -607,6 +972,499 @@ with tab3:
                                     hovertemplate=f'{cat} Seasonal: %{{y:.2f}}<extra></extra>'
                                 ))
                 
+                # Enhanced forecasting visualization
+                if show_forecast:
+                    forecast_data = results.get('overall_forecast') or results.get('category_forecasts', {})
+                    
+                    if results.get('overall_forecast'):
+                        # Single series forecast with enhanced metrics display
+                        forecast = forecast_data
+                        
+                        # Model information header
+                        st.markdown(f"""
+                        <div class="info-box">
+                            <h4 style="margin-top: 0;">🔮 Forecast Results - {forecast.get('model_name', 'Unknown Model')}</h4>
+                            <p><strong>Model Type:</strong> {forecast.get('model_type', 'unknown').title().replace('_', ' ')}</p>
+                        </div>
+                        """, unsafe_allow_html=True)
+                        
+                        # FIXED: Add vertical line to separate train/test - ensure proper date conversion
+                        try:
+                            split_date = pd.to_datetime(forecast['split_date'])
+                            fig.add_vline(
+                                x=split_date,
+                                line_dash="solid",
+                                line_color="rgba(255,0,0,0.8)",
+                                line_width=3,
+                                annotation_text="📊 Train/Test Split",
+                                annotation_position="top",
+                                annotation=dict(
+                                    bgcolor="rgba(255,255,255,0.8)",
+                                    bordercolor="rgba(255,0,0,0.8)",
+                                    borderwidth=1
+                                )
+                            )
+                        except Exception as e:
+                            st.warning(f"Could not add split line: {e}")
+                        
+                        # FIXED: Add forecast line with proper data conversion
+                        try:
+                            test_dates = pd.to_datetime(forecast['test_dates'])
+                            test_predicted = forecast['test_predicted']
+                            
+                            fig.add_trace(go.Scatter(
+                                x=test_dates,
+                                y=test_predicted,
+                                mode='lines+markers',
+                                name='🔮 Forecast',
+                                line=dict(color='rgba(255,165,0,{})'.format(forecast_transparency), width=4, dash='dash'),
+                                marker=dict(size=6, color='orange'),
+                                hovertemplate='Forecast: %{y:.2f}<br>Date: %{x}<extra></extra>'
+                            ))
+                            
+                            # FIXED: Add actual test values for comparison
+                            test_actual = forecast['test_actual']
+                            fig.add_trace(go.Scatter(
+                                x=test_dates,
+                                y=test_actual,
+                                mode='lines+markers',
+                                name='📈 Actual (Test)',
+                                line=dict(color='rgba(0,128,0,0.8)', width=3),
+                                marker=dict(size=6, color='green'),
+                                hovertemplate='Actual: %{y:.2f}<br>Date: %{x}<extra></extra>'
+                            ))
+                            
+                        except Exception as e:
+                            st.error(f"Error adding forecast traces: {e}")
+                        
+                        # FIXED: Add confidence intervals with proper error handling
+                        if show_confidence_intervals:
+                            try:
+                                # 95% CI (outermost)
+                                fig.add_trace(go.Scatter(
+                                    x=test_dates,
+                                    y=forecast['ci_95_upper'],
+                                    mode='lines',
+                                    line=dict(width=0),
+                                    showlegend=False,
+                                    hoverinfo='skip'
+                                ))
+                                fig.add_trace(go.Scatter(
+                                    x=test_dates,
+                                    y=forecast['ci_95_lower'],
+                                    mode='lines',
+                                    line=dict(width=0),
+                                    fill='tonexty',
+                                    fillcolor=f'rgba(255,165,0,{forecast_transparency*0.1})',
+                                    name='95% Confidence',
+                                    hovertemplate='95% CI: %{y:.2f}<extra></extra>'
+                                ))
+                                
+                                # 80% CI
+                                fig.add_trace(go.Scatter(
+                                    x=test_dates,
+                                    y=forecast['ci_80_upper'],
+                                    mode='lines',
+                                    line=dict(width=0),
+                                    showlegend=False,
+                                    hoverinfo='skip'
+                                ))
+                                fig.add_trace(go.Scatter(
+                                    x=test_dates,
+                                    y=forecast['ci_80_lower'],
+                                    mode='lines',
+                                    line=dict(width=0),
+                                    fill='tonexty',
+                                    fillcolor=f'rgba(255,165,0,{forecast_transparency*0.2})',
+                                    name='80% Confidence',
+                                    hovertemplate='80% CI: %{y:.2f}<extra></extra>'
+                                ))
+                                
+                                # 50% CI (innermost)
+                                fig.add_trace(go.Scatter(
+                                    x=test_dates,
+                                    y=forecast['ci_50_upper'],
+                                    mode='lines',
+                                    line=dict(width=0),
+                                    showlegend=False,
+                                    hoverinfo='skip'
+                                ))
+                                fig.add_trace(go.Scatter(
+                                    x=test_dates,
+                                    y=forecast['ci_50_lower'],
+                                    mode='lines',
+                                    line=dict(width=0),
+                                    fill='tonexty',
+                                    fillcolor=f'rgba(255,165,0,{forecast_transparency*0.4})',
+                                    name='50% Confidence',
+                                    hovertemplate='50% CI: %{y:.2f}<extra></extra>'
+                                ))
+                                
+                            except Exception as e:
+                                st.warning(f"Could not add confidence intervals: {e}")
+                        
+                        # FIXED: Enhanced forecast accuracy metrics display
+                        st.subheader("📊 Forecast Performance Metrics")
+                        
+                        metrics = forecast['metrics']
+                        
+                        # Main metrics row
+                        col_metric1, col_metric2, col_metric3, col_metric4 = st.columns(4)
+                        
+                        with col_metric1:
+                            mae_value = metrics['mae']
+                            st.metric(
+                                "🎯 MAE", 
+                                f"{mae_value:.2f}", 
+                                help="Mean Absolute Error - average prediction error"
+                            )
+                        
+                        with col_metric2:
+                            rmse_value = metrics['rmse']
+                            st.metric(
+                                "📊 RMSE", 
+                                f"{rmse_value:.2f}", 
+                                help="Root Mean Square Error - penalizes larger errors more"
+                            )
+                        
+                        with col_metric3:
+                            if metrics.get('mape'):
+                                mape_value = metrics['mape']
+                                # Color coding for MAPE
+                                if mape_value < 10:
+                                    mape_color = "🟢"
+                                elif mape_value < 20:
+                                    mape_color = "🟡"
+                                else:
+                                    mape_color = "🔴"
+                                
+                                st.metric(
+                                    f"{mape_color} MAPE", 
+                                    f"{mape_value:.1f}%", 
+                                    help="Mean Absolute Percentage Error"
+                                )
+                            else:
+                                st.metric("📈 MAPE", "N/A", help="Not available for data with zero values")
+                        
+                        with col_metric4:
+                            if metrics.get('r2') is not None:
+                                r2_value = metrics['r2']
+                                # Color coding for R²
+                                if r2_value > 0.8:
+                                    r2_color = "🟢"
+                                elif r2_value > 0.6:
+                                    r2_color = "🟡"
+                                elif r2_value > 0:
+                                    r2_color = "🟠"
+                                else:
+                                    r2_color = "🔴"
+                                
+                                st.metric(
+                                    f"{r2_color} R²", 
+                                    f"{r2_value:.3f}", 
+                                    help="R-squared - explained variance (higher is better)"
+                                )
+                            else:
+                                st.metric("📈 R²", "N/A", help="R-squared not available")
+                        
+                        # Additional metrics row
+                        if metrics.get('directional_accuracy') or metrics.get('mse'):
+                            col_metric5, col_metric6, col_metric7, col_metric8 = st.columns(4)
+                            
+                            with col_metric5:
+                                if metrics.get('mse'):
+                                    st.metric(
+                                        "📏 MSE", 
+                                        f"{metrics['mse']:.2f}", 
+                                        help="Mean Squared Error"
+                                    )
+                            
+                            with col_metric6:
+                                if metrics.get('directional_accuracy'):
+                                    dir_acc = metrics['directional_accuracy']
+                                    dir_color = "🟢" if dir_acc > 70 else "🟡" if dir_acc > 50 else "🔴"
+                                    st.metric(
+                                        f"{dir_color} Direction Accuracy", 
+                                        f"{dir_acc:.1f}%", 
+                                        help="Percentage of correct trend direction predictions"
+                                    )
+                            
+                            with col_metric7:
+                                # Model-specific metrics
+                                if metrics.get('drift'):
+                                    st.metric(
+                                        "📈 Drift", 
+                                        f"{metrics['drift']:.4f}", 
+                                        help="Average change per period (for drift models)"
+                                    )
+                            
+                            with col_metric8:
+                                # Forecast horizon
+                                st.metric(
+                                    "⏱️ Test Periods", 
+                                    f"{len(test_dates)}", 
+                                    help="Number of periods used for testing"
+                                )
+                        
+                        # Feature importance for ML models
+                        if forecast.get('feature_importance'):
+                            st.subheader("🔍 Feature Importance")
+                            
+                            importance = forecast['feature_importance']
+                            
+                            # Create horizontal bar chart for feature importance
+                            features = list(importance.keys())[:10]  # Top 10 features
+                            values = [importance[f] for f in features]
+                            
+                            fig_importance = go.Figure(go.Bar(
+                                x=values,
+                                y=features,
+                                orientation='h',
+                                marker_color='rgba(55, 128, 191, 0.7)',
+                                hovertemplate='%{y}: %{x:.3f}<extra></extra>'
+                            ))
+                            
+                            fig_importance.update_layout(
+                                title="Top 10 Most Important Features",
+                                xaxis_title="Importance",
+                                yaxis_title="Features",
+                                height=400,
+                                plot_bgcolor='rgba(0,0,0,0)',
+                                paper_bgcolor='rgba(0,0,0,0)',
+                                font=dict(color='#2E4057')
+                            )
+                            
+                            st.plotly_chart(fig_importance, use_container_width=True)
+                            
+                            # Feature explanation
+                            with st.expander("📚 Feature Explanations", expanded=False):
+                                st.markdown("""
+                                **Feature Types:**
+                                - `days_numeric`: Linear time trend
+                                - `month_sin/cos`: Monthly seasonality (cyclical)
+                                - `dow_sin/cos`: Day-of-week seasonality (cyclical)
+                                - `doy_sin/cos`: Day-of-year seasonality (cyclical)
+                                - `lag_X`: Values from X periods ago
+                                - `rolling_X`: Moving average over X periods
+                                - `month/quarter`: Direct seasonal indicators
+                                """)
+                        
+                        # Model comparison suggestion
+                        st.markdown("---")
+                        st.subheader("💡 Model Performance Insights")
+                        
+                        # Performance assessment
+                        performance_insights = []
+                        
+                        if metrics.get('mape'):
+                            mape = metrics['mape']
+                            if mape < 10:
+                                performance_insights.append("🟢 **Excellent MAPE** (<10%) - Very accurate forecasts")
+                            elif mape < 20:
+                                performance_insights.append("🟡 **Good MAPE** (10-20%) - Reasonably accurate forecasts")
+                            else:
+                                performance_insights.append("🔴 **High MAPE** (>20%) - Consider trying different models")
+                        
+                        if metrics.get('r2') is not None:
+                            r2 = metrics['r2']
+                            if r2 > 0.8:
+                                performance_insights.append("🟢 **High R²** (>0.8) - Model explains data very well")
+                            elif r2 > 0.6:
+                                performance_insights.append("🟡 **Moderate R²** (0.6-0.8) - Good model fit")
+                            elif r2 > 0:
+                                performance_insights.append("🟠 **Low R²** (0-0.6) - Model has limited explanatory power")
+                            else:
+                                performance_insights.append("🔴 **Negative R²** - Model performs worse than simple average")
+                        
+                        if metrics.get('directional_accuracy'):
+                            dir_acc = metrics['directional_accuracy']
+                            if dir_acc > 70:
+                                performance_insights.append("🟢 **High Directional Accuracy** (>70%) - Good trend prediction")
+                            elif dir_acc > 50:
+                                performance_insights.append("🟡 **Moderate Directional Accuracy** (50-70%) - Some trend prediction ability")
+                            else:
+                                performance_insights.append("🔴 **Low Directional Accuracy** (<50%) - Poor trend prediction")
+                        
+                        # Display insights
+                        for insight in performance_insights:
+                            st.markdown(insight)
+                        
+                        # Model recommendations
+                        current_model = forecast.get('model_type', 'unknown')
+                        st.markdown("**🚀 Recommendations:**")
+                        
+                        # Dynamic model recommendations based on performance
+                        if show_forecast and results.get('overall_forecast'):
+                            forecast = results['overall_forecast']
+                            metrics = forecast['metrics']
+                            
+                            st.markdown("---")
+                            st.subheader("💡 Performance-Based Insights")
+                            
+                            # Performance assessment berdasarkan metrics aktual
+                            performance_insights = []
+                            
+                            # MAE-based assessment
+                            mae = metrics['mae']
+                            data_mean = results['statistics']['mean']
+                            mae_ratio = mae / abs(data_mean) if abs(data_mean) > 0 else float('inf')
+                            
+                            if mae_ratio < 0.05:
+                                performance_insights.append("🟢 **Excellent MAE** (<5% of data mean) - Very accurate forecasts")
+                            elif mae_ratio < 0.15:
+                                performance_insights.append("🟡 **Good MAE** (5-15% of data mean) - Reasonably accurate forecasts")
+                            else:
+                                performance_insights.append("🔴 **High MAE** (>15% of data mean) - Consider trying different models")
+                            
+                            # MAPE-based assessment
+                            if metrics.get('mape'):
+                                mape = metrics['mape']
+                                if mape < 10:
+                                    performance_insights.append("🟢 **Excellent MAPE** (<10%) - Very accurate forecasts")
+                                elif mape < 20:
+                                    performance_insights.append("🟡 **Good MAPE** (10-20%) - Reasonably accurate forecasts")
+                                else:
+                                    performance_insights.append("🔴 **High MAPE** (>20%) - Consider trying different models")
+                            
+                            # R²-based assessment
+                            if metrics.get('r2') is not None:
+                                r2 = metrics['r2']
+                                if r2 > 0.8:
+                                    performance_insights.append("🟢 **High R²** (>0.8) - Model explains data very well")
+                                elif r2 > 0.6:
+                                    performance_insights.append("🟡 **Moderate R²** (0.6-0.8) - Good model fit")
+                                elif r2 > 0:
+                                    performance_insights.append("🟠 **Low R²** (0-0.6) - Model has limited explanatory power")
+                                else:
+                                    performance_insights.append("🔴 **Negative R²** - Model performs worse than simple average")
+                            
+                            # Directional accuracy assessment
+                            if metrics.get('directional_accuracy'):
+                                dir_acc = metrics['directional_accuracy']
+                                if dir_acc > 70:
+                                    performance_insights.append("🟢 **High Directional Accuracy** (>70%) - Good trend prediction")
+                                elif dir_acc > 50:
+                                    performance_insights.append("🟡 **Moderate Directional Accuracy** (50-70%) - Some trend prediction ability")
+                                else:
+                                    performance_insights.append("🔴 **Low Directional Accuracy** (<50%) - Poor trend prediction")
+                            
+                            # Display insights
+                            for insight in performance_insights:
+                                st.markdown(insight)
+                            
+                            # Dynamic model recommendations based on actual performance
+                            current_model = forecast.get('model_type', 'unknown')
+                            current_model_name = forecast.get('model_name', 'Current Model')
+                            
+                            st.markdown("**🚀 Performance-Based Recommendations:**")
+                            
+                            # Recommendation logic based on actual metrics
+                            recommendations = []
+                            
+                            # Poor performance indicators
+                            poor_performance = (
+                                mae_ratio > 0.15 or 
+                                (metrics.get('mape', 0) > 20) or 
+                                (metrics.get('r2', 0) < 0.3) or
+                                (metrics.get('directional_accuracy', 0) < 50)
+                            )
+                            
+                            # Good performance indicators  
+                            good_performance = (
+                                mae_ratio < 0.1 and 
+                                (metrics.get('mape', 100) < 15) and 
+                                (metrics.get('r2', 0) > 0.6) and
+                                (metrics.get('directional_accuracy', 0) > 60)
+                            )
+                            
+                            if good_performance:
+                                recommendations.append(f"✅ **{current_model_name}** shows excellent performance for your data")
+                                recommendations.append("🎯 Consider using this model for production forecasting")
+                                
+                                # Suggest model comparison only if not already done
+                                if not st.session_state.get('model_comparison'):
+                                    recommendations.append("🔄 Optional: Run model comparison to confirm this is the best choice")
+                            
+                            elif poor_performance:
+                                recommendations.append(f"⚠️ **{current_model_name}** shows suboptimal performance")
+                                
+                                # Specific recommendations based on model type and data characteristics
+                                data_volatility = results['statistics'].get('coefficient_variation', 0)
+                                has_strong_trend = abs(results['statistics'].get('trend_slope', 0)) > 0.01
+                                has_seasonality = results.get('seasonality_strength', 0) > 0.2
+                                
+                                if current_model in ['naive', 'naive_drift']:
+                                    if has_seasonality:
+                                        recommendations.append("🌊 Try **ETS** or **Moving Average** for better seasonal handling")
+                                    elif has_strong_trend:
+                                        recommendations.append("📈 Try **Random Forest** or **Linear Regression** for trend capture")
+                                    else:
+                                        recommendations.append("🎯 Try **ETS** or **ARIMA** for better pattern recognition")
+                                
+                                elif current_model == 'linear_regression':
+                                    if data_volatility > 0.3:
+                                        recommendations.append("🌳 Try **Random Forest** or **CatBoost** for non-linear patterns")
+                                    elif has_seasonality:
+                                        recommendations.append("🌊 Try **ETS** for better seasonal modeling")
+                                    else:
+                                        recommendations.append("📊 Try **ARIMA** or **Theta** methods")
+                                
+                                elif current_model in ['random_forest', 'catboost']:
+                                    if metrics.get('r2', 0) < 0.2:
+                                        recommendations.append("📊 Try **ETS** or **ARIMA** - simpler models might work better")
+                                        recommendations.append("🔍 Check data quality - complex models struggling suggests data issues")
+                                    else:
+                                        recommendations.append("⚙️ Try tuning model parameters or different ML approaches")
+                                
+                                elif current_model in ['ets', 'arima']:
+                                    if data_volatility > 0.5:
+                                        recommendations.append("🌳 Try **Random Forest** for handling high volatility")
+                                    elif not has_seasonality:
+                                        recommendations.append("📈 Try **Linear Regression** or **Theta** method")
+                                    else:
+                                        recommendations.append("🎯 Try **CatBoost** for complex seasonal patterns")
+                                
+                                else:
+                                    recommendations.append("🔄 **Run model comparison** to find the best performing model")
+                            
+                            else:
+                                # Moderate performance
+                                recommendations.append(f"🟡 **{current_model_name}** shows moderate performance")
+                                recommendations.append("🔄 **Run model comparison** to potentially find better alternatives")
+                                
+                                # Suggest specific alternatives based on data characteristics
+                                seasonality_strength = results.get('seasonality_strength', 0)
+                                if seasonality_strength > 0.3:
+                                    recommendations.append("🌊 Strong seasonality detected - try **ETS** if not already used")
+                                
+                                trend_slope = abs(results['statistics'].get('trend_slope', 0))
+                                if trend_slope > 0.01:
+                                    recommendations.append("📈 Strong trend detected - try **Random Forest** or **CatBoost**")
+                            
+                            # Display recommendations
+                            for rec in recommendations:
+                                if rec.startswith("✅"):
+                                    st.success(rec)
+                                elif rec.startswith("⚠️") or rec.startswith("🔴"):
+                                    st.warning(rec)  
+                                elif rec.startswith("🔄"):
+                                    st.info(rec)
+                                else:
+                                    st.info(rec)
+
+                if show_forecast and st.checkbox("🔧 Show Forecast Debug Info", value=False):
+                    if results.get('overall_forecast'):
+                        st.json(results['overall_forecast'])
+                    else:
+                        st.warning("No forecast data available")
+                        
+                    # Check if forecast is in results
+                    st.write("Available keys in results:", list(results.keys()))
+                    
+                    # Show forecast data structure
+                    if 'overall_forecast' in results:
+                        st.write("Forecast data keys:", list(results['overall_forecast'].keys()))
+
                 # Enhanced styling
                 fig.update_layout(
                     plot_bgcolor='rgba(0,0,0,0)',
@@ -625,11 +1483,13 @@ with tab3:
                         tickfont_color='#495057'
                     ),
                     legend=dict(
-                        bgcolor='rgba(255,255,255,0.8)',
+                        bgcolor='rgba(255,255,255,0.9)',
                         bordercolor='rgba(128,128,128,0.5)',
-                        borderwidth=1
+                        borderwidth=1,
+                        font=dict(size=11)
                     ),
-                    height=500
+                    height=600,
+                    hovermode='x unified'
                 )
                 
                 st.plotly_chart(fig, use_container_width=True)
@@ -651,12 +1511,12 @@ with tab3:
                                 cat_decomp = category_decomps[cat]
                                 dates = pd.to_datetime(cat_decomp['dates'])
                                 
-                                # Create subplots for this category
+                                # Create enhanced subplots
                                 from plotly.subplots import make_subplots
                                 
                                 fig_decomp = make_subplots(
                                     rows=3, cols=1,
-                                    subplot_titles=('Original Data', 'Trend Component', 'Seasonal Component'),
+                                    subplot_titles=('📈 Original Data', '📉 Trend Component', '🌊 Seasonal Component'),
                                     vertical_spacing=0.08,
                                     row_heights=[0.4, 0.3, 0.3]
                                 )
@@ -664,30 +1524,34 @@ with tab3:
                                 # Original data
                                 fig_decomp.add_trace(
                                     go.Scatter(x=dates, y=cat_decomp['original'], 
-                                             name='Original', line=dict(color='#3B82F6', width=2)),
+                                             name='Original', line=dict(color='#3B82F6', width=2),
+                                             hovertemplate='Original: %{y:.2f}<extra></extra>'),
                                     row=1, col=1
                                 )
                                 
                                 # Trend
                                 fig_decomp.add_trace(
                                     go.Scatter(x=dates, y=cat_decomp['trend'], 
-                                             name='Trend', line=dict(color='#EF4444', width=2)),
+                                             name='Trend', line=dict(color='#EF4444', width=2),
+                                             hovertemplate='Trend: %{y:.2f}<extra></extra>'),
                                     row=2, col=1
                                 )
                                 
                                 # Seasonal
                                 fig_decomp.add_trace(
                                     go.Scatter(x=dates, y=cat_decomp['seasonal'], 
-                                             name='Seasonal', line=dict(color='#10B981', width=2)),
+                                             name='Seasonal', line=dict(color='#10B981', width=2),
+                                             hovertemplate='Seasonal: %{y:.2f}<extra></extra>'),
                                     row=3, col=1
                                 )
                                 
                                 fig_decomp.update_layout(
-                                    height=600,
+                                    height=650,
                                     showlegend=False,
                                     plot_bgcolor='rgba(0,0,0,0)',
                                     paper_bgcolor='rgba(0,0,0,0)',
-                                    font=dict(color='#2E4057')
+                                    font=dict(color='#2E4057'),
+                                    title_font_color='#2E4057'
                                 )
                                 
                                 fig_decomp.update_xaxes(gridcolor='rgba(128,128,128,0.2)')
@@ -704,7 +1568,7 @@ with tab3:
                         
                         fig_decomp = make_subplots(
                             rows=3, cols=1,
-                            subplot_titles=('Original Data', 'Trend Component', 'Seasonal Component'),
+                            subplot_titles=('📈 Original Data', '📉 Trend Component', '🌊 Seasonal Component'),
                             vertical_spacing=0.08,
                             row_heights=[0.4, 0.3, 0.3]
                         )
@@ -712,26 +1576,29 @@ with tab3:
                         # Original data
                         fig_decomp.add_trace(
                             go.Scatter(x=dates, y=decomp_data['original'], 
-                                     name='Original', line=dict(color='#3B82F6', width=2)),
+                                     name='Original', line=dict(color='#3B82F6', width=2),
+                                     hovertemplate='Original: %{y:.2f}<extra></extra>'),
                             row=1, col=1
                         )
                         
                         # Trend
                         fig_decomp.add_trace(
                             go.Scatter(x=dates, y=decomp_data['trend'], 
-                                     name='Trend', line=dict(color='#EF4444', width=2)),
+                                     name='Trend', line=dict(color='#EF4444', width=2),
+                                     hovertemplate='Trend: %{y:.2f}<extra></extra>'),
                             row=2, col=1
                         )
                         
                         # Seasonal
                         fig_decomp.add_trace(
                             go.Scatter(x=dates, y=decomp_data['seasonal'], 
-                                     name='Seasonal', line=dict(color='#10B981', width=2)),
+                                     name='Seasonal', line=dict(color='#10B981', width=2),
+                                     hovertemplate='Seasonal: %{y:.2f}<extra></extra>'),
                             row=3, col=1
                         )
                         
                         fig_decomp.update_layout(
-                            height=600,
+                            height=650,
                             showlegend=False,
                             plot_bgcolor='rgba(0,0,0,0)',
                             paper_bgcolor='rgba(0,0,0,0)',
@@ -779,10 +1646,9 @@ with tab3:
                 )
                 
                 st.plotly_chart(fig, use_container_width=True)
-        
-        # Enhanced detailed results section
+
         col1, col2 = st.columns(2)
-        
+            
         with col1:
             st.markdown("""
             <div class="metric-card">
@@ -828,6 +1694,99 @@ with tab3:
                         help="Overall direction and slope of your data trend"
                     )
                 
+                # Enhanced predictability metrics
+                predictability = stats.get('predictability', 'Unknown')
+                cv = stats.get('coefficient_variation', 0)
+                cv_explanation = stats.get('cv_explanation', 'Coefficient of Variation measures relative variability')
+                rw_explanation = stats.get('rw_explanation', 'Random walk analysis examines autocorrelation patterns')
+
+                # Color coding based on predictability
+                if 'Very High' in predictability:
+                    pred_color = "#4caf50"
+                    pred_icon = "🎯"
+                elif 'High' in predictability:
+                    pred_color = "#8bc34a"
+                    pred_icon = "🎯"
+                elif 'Moderate' in predictability:
+                    pred_color = "#ff9800"
+                    pred_icon = "🎲"
+                elif 'Low' in predictability:
+                    pred_color = "#ff5722"
+                    pred_icon = "⚡"
+                else:
+                    pred_color = "#9e9e9e"
+                    pred_icon = "❓"
+
+                
+                # Enhanced predictability display with expandable explanations
+                with st.expander("🎯 Predictability Analysis - Click for Details", expanded=True):
+                    st.markdown(f"""
+                    <div style="background: linear-gradient(135deg, {pred_color}15 0%, {pred_color}25 100%); 
+                                border: 2px solid {pred_color}; padding: 15px; margin: 10px 0; border-radius: 10px;">
+                        <strong>{pred_icon} Predictability Level:</strong> {predictability}<br>
+                        <strong>📊 Coefficient of Variation:</strong> {cv:.3f}
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    # Detailed explanations
+                    st.markdown("**📚 What is Coefficient of Variation (CV)?**")
+                    st.info(f"""
+                    {cv_explanation}
+                    
+                    **Interpretation Guide:**
+                    - CV < 0.1: Very stable data (excellent for forecasting)
+                    - CV 0.1-0.3: Moderately stable (good for forecasting)  
+                    - CV 0.3-0.6: Moderate volatility (fair for forecasting)
+                    - CV 0.6-1.0: High volatility (challenging to forecast)
+                    - CV > 1.0: Very high volatility (very difficult to forecast)
+                    """)
+
+                # Random walk analysis with enhanced explanation
+                random_walk_insight = stats.get('random_walk_insight', 'Unknown')
+
+                with st.expander("🔄 Random Walk Analysis - Click for Details", expanded=False):
+                    st.markdown(f"""
+                    <div style="background: linear-gradient(135deg, #e1f5fe 0%, #b3e5fc 100%); 
+                                border: 2px solid #03a9f4; padding: 15px; margin: 10px 0; border-radius: 10px;">
+                        <strong>🔄 Pattern Analysis:</strong> {random_walk_insight}
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    st.markdown("**📚 What is Random Walk Analysis?**")
+                    st.info(f"""
+                    {rw_explanation}
+                    
+                    **Pattern Types:**
+                    - **Random Walk**: Changes are unpredictable (like stock prices)
+                    - **Momentum**: Trends tend to continue (like growing businesses)
+                    - **Mean Reversion**: Values return to average (like seasonal patterns)
+                    - **Weak Patterns**: Some predictable elements but mostly random
+                    
+                    **Autocorrelation Values:**
+                    - Close to 0: Random walk behavior
+                    - Positive (>0.3): Momentum/trending behavior  
+                    - Negative (<-0.3): Mean reversion behavior
+                    """)
+                
+                st.markdown(f"""
+                <div style="background: linear-gradient(135deg, {pred_color}15 0%, {pred_color}25 100%); 
+                            border: 2px solid {pred_color}; padding: 15px; margin: 10px 0; border-radius: 10px;">
+                    <strong>{pred_icon} Predictability:</strong> {predictability}<br>
+                    <small>Coefficient of Variation: {cv:.3f}</small>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # Random walk analysis
+                random_walk_insight = stats.get('random_walk_insight', 'Unknown')
+                
+                st.markdown(f"""
+                <div style="background: linear-gradient(135deg, #e1f5fe 0%, #b3e5fc 100%); 
+                            border: 2px solid #03a9f4; padding: 15px; margin: 10px 0; border-radius: 10px;">
+                    <strong>🔄 Random Walk Analysis:</strong><br>
+                    <small>{random_walk_insight}</small>
+                </div>
+                """, unsafe_allow_html=True)
+                
                 # Category breakdown if available
                 if results.get('has_categories', False) and 'categories' in stats:
                     st.markdown("**🏷️ Category Performance:**")
@@ -835,11 +1794,21 @@ with tab3:
                     for cat, cat_stats in stats['categories'].items():
                         cat_trend_color = "🔺" if cat_stats['trend_slope'] > 0 else "🔻" if cat_stats['trend_slope'] < 0 else "➡️"
                         
+                        # Predictability color for category
+                        cat_pred = cat_stats.get('predictability', 'Unknown')
+                        if 'Very High' in cat_pred or 'High' in cat_pred:
+                            cat_bg_color = "#e8f5e8"
+                        elif 'Moderate' in cat_pred:
+                            cat_bg_color = "#fff3e0"
+                        else:
+                            cat_bg_color = "#ffebee"
+                        
                         st.markdown(f"""
-                        <div style="background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%); 
+                        <div style="background: {cat_bg_color}; 
                                     border-left: 4px solid #007bff; padding: 10px; margin: 5px 0; border-radius: 5px;">
                             <strong>{cat_trend_color} {cat}:</strong> {cat_stats['trend'].title()}<br>
-                            <small>Mean: {cat_stats['mean']:.2f} | Slope: {cat_stats['trend_slope']:+.4f}/day</small>
+                            <small>Mean: {cat_stats['mean']:.2f} | Slope: {cat_stats['trend_slope']:+.4f}/day</small><br>
+                            <small>Predictability: {cat_pred.split(' - ')[0]}</small>
                         </div>
                         """, unsafe_allow_html=True)
                 
@@ -927,6 +1896,26 @@ with tab3:
                     <small>From first to last data point</small>
                 </div>
                 """, unsafe_allow_html=True)
+                
+                # Forecast accuracy (if available)
+                if results.get('overall_forecast') and results['overall_forecast'].get('metrics'):
+                    metrics = results['overall_forecast']['metrics']
+                    mae = metrics['mae']
+                    rmse = metrics['rmse']
+                    mape = metrics.get('mape')
+                    
+                    # Accuracy assessment
+                    accuracy_color = "#4caf50" if mae < stats['std'] * 0.5 else "#ff9800" if mae < stats['std'] else "#f44336"
+                    accuracy_icon = "🎯" if mae < stats['std'] * 0.5 else "🎲" if mae < stats['std'] else "⚠️"
+                    
+                    st.markdown(f"""
+                    <div style="background: linear-gradient(135deg, {accuracy_color}15 0%, {accuracy_color}25 100%); 
+                                border: 2px solid {accuracy_color}; padding: 15px; margin: 10px 0; border-radius: 10px;">
+                        <strong>{accuracy_icon} Forecast Accuracy:</strong><br>
+                        <small>MAE: {mae:.2f} | RMSE: {rmse:.2f}</small><br>
+                        {f'<small>MAPE: {mape:.1f}%</small>' if mape else ''}
+                    </div>
+                    """, unsafe_allow_html=True)
                 
                 # Trend slope detailed explanation
                 trend_slope = results['statistics'].get('trend_slope', 0)
@@ -1034,6 +2023,111 @@ with tab3:
                 st.session_state.analysis_results = None
                 st.session_state.current_data = None
                 st.session_state.current_session_id = None
+                st.success("🔄 Session cleared! You can now load new data.")
+                st.rerun()
+
+    # Model Comparison Results (if available)
+    if hasattr(st.session_state, 'model_comparison') and st.session_state.model_comparison:
+        st.subheader("🏆 Model Comparison Results")
+        
+        comparison_data = st.session_state.model_comparison
+        comparison_table = comparison_data['comparison_table']
+        successful_models = [m for m in comparison_table if m['status'] == 'success']
+        
+        if successful_models:
+            # Create performance comparison chart
+            import pandas as pd
+            df_comp = pd.DataFrame(successful_models)
+            
+            # Create comparison visualization
+            col_chart1, col_chart2 = st.columns(2)
+            
+            with col_chart1:
+                # MAE Comparison
+                fig_mae = px.bar(
+                    df_comp, 
+                    x='model', 
+                    y='mae',
+                    title='MAE Comparison (Lower is Better)',
+                    color='mae',
+                    color_continuous_scale='RdYlGn_r'  # Red for high, Green for low
+                )
+                fig_mae.update_layout(
+                    xaxis_tickangle=45,
+                    height=400,
+                    plot_bgcolor='rgba(0,0,0,0)',
+                    paper_bgcolor='rgba(0,0,0,0)',
+                    font=dict(color='#2E4057')
+                )
+                st.plotly_chart(fig_mae, use_container_width=True)
+            
+            with col_chart2:
+                # R² Comparison (if available)
+                models_with_r2 = df_comp[df_comp['r2'].notna()]
+                if not models_with_r2.empty:
+                    fig_r2 = px.bar(
+                        models_with_r2, 
+                        x='model', 
+                        y='r2',
+                        title='R² Comparison (Higher is Better)',
+                        color='r2',
+                        color_continuous_scale='RdYlGn'  # Red for low, Green for high
+                    )
+                    fig_r2.update_layout(
+                        xaxis_tickangle=45,
+                        height=400,
+                        plot_bgcolor='rgba(0,0,0,0)',
+                        paper_bgcolor='rgba(0,0,0,0)',
+                        font=dict(color='#2E4057')
+                    )
+                    st.plotly_chart(fig_r2, use_container_width=True)
+                else:
+                    st.info("R² comparison not available for these models")
+            
+            # Detailed comparison table
+            with st.expander("📊 Detailed Comparison Table", expanded=False):
+                display_df = df_comp[['rank', 'model', 'mae', 'rmse', 'r2', 'mape', 'directional_accuracy']].copy()
+                
+                # Format numeric columns
+                numeric_cols = ['mae', 'rmse', 'r2', 'mape', 'directional_accuracy']
+                for col in numeric_cols:
+                    if col in display_df.columns:
+                        display_df[col] = display_df[col].apply(lambda x: f"{x:.3f}" if x is not None else "N/A")
+                
+                display_df.columns = ['Rank', 'Model', 'MAE', 'RMSE', 'R²', 'MAPE (%)', 'Direction Acc (%)']
+                st.dataframe(display_df, use_container_width=True)
+            
+            # Best model summary
+            best_model = comparison_data['best_model']
+            st.markdown(f"""
+            <div class="success-box">
+                🏆 <strong>Champion Model:</strong> {best_model['model_name']}<br>
+                📈 <strong>Performance:</strong> MAE {best_model['mae']:.3f}, RMSE {best_model['rmse']:.3f}
+                {f", R² {best_model['r2']:.3f}" if best_model.get('r2') is not None else ""}
+                {f", MAPE {best_model['mape']:.1f}%" if best_model.get('mape') is not None else ""}
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # Model selection insights
+            st.markdown("### 💡 Model Selection Insights")
+            
+            # Analyze results and provide recommendations
+            mae_values = [m['mae'] for m in successful_models if m['mae'] is not None]
+            if len(mae_values) > 1:
+                mae_range = max(mae_values) - min(mae_values)
+                mae_cv = np.std(mae_values) / np.mean(mae_values) if np.mean(mae_values) > 0 else 0
+                
+                if mae_cv < 0.1:
+                    st.info("📊 **Model Performance**: All models show similar accuracy - choose based on interpretability needs")
+                elif mae_cv < 0.3:
+                    st.success("📊 **Model Performance**: Clear performance differences - best model significantly outperforms others")
+                else:
+                    st.warning("📊 **Model Performance**: Large performance variations - data may be challenging to predict")
+            
+            # Clear comparison results button
+            if st.button("🗑️ Clear Comparison Results", type="secondary"):
+                if hasattr(st.session_state, 'model_comparison'):
+                    delattr(st.session_state, 'model_comparison')
                 st.rerun()
 
 # Footer
