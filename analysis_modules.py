@@ -3,6 +3,8 @@ import numpy as np
 import plotly.express as px
 from utils import parse_datetime_flexible, clean_float, sanitize_for_json
 import logging
+from scipy import signal
+from scipy.stats import pearsonr
 
 class AnalysisModules:
     @staticmethod
@@ -401,10 +403,10 @@ class AnalysisModules:
 
     @staticmethod
     def create_time_series_decomposition(df, date_column, value_column):
-        """Create time series decomposition (trend, seasonal, residual)"""
+        """Create time series decomposition (trend, seasonal, residual) with seasonality analysis"""
         if len(df) < 10:
             return None
-        
+            
         df_sorted = df.sort_values(date_column).reset_index(drop=True)
         x_vals = np.arange(len(df_sorted))
         
@@ -422,13 +424,215 @@ class AnalysisModules:
         # Residual component
         residual = df_sorted[value_column] - trend_line - seasonal_smooth
         
+        # Calculate seasonality strength
+        seasonality_strength = AnalysisModules.calculate_seasonality_strength(
+            df_sorted[value_column].values, 
+            seasonal_smooth.values if hasattr(seasonal_smooth, 'values') else seasonal_smooth,
+            residual.values if hasattr(residual, 'values') else residual
+        )
+        
+        # Detect seasonality period
+        seasonality_period = AnalysisModules.detect_seasonality_period(df_sorted[value_column].values)
+        
+        # Classify seasonality strength
+        strength_category = AnalysisModules.classify_seasonality_strength(seasonality_strength)
+        
         return {
             'dates': df_sorted[date_column].dt.strftime('%Y-%m-%d').tolist(),
             'original': df_sorted[value_column].tolist(),
             'trend': trend_line.tolist(),
-            'seasonal': seasonal_smooth.tolist(),
-            'residual': residual.tolist()
+            'seasonal': seasonal_smooth.tolist() if hasattr(seasonal_smooth, 'tolist') else seasonal_smooth.tolist(),
+            'residual': residual.tolist() if hasattr(residual, 'tolist') else residual.tolist(),
+            'seasonality_analysis': {
+                'strength': round(seasonality_strength, 4),
+                'strength_category': strength_category,
+                'period_points': seasonality_period,
+                'interpretation': AnalysisModules.interpret_seasonality(seasonality_strength, seasonality_period, len(df_sorted))
+            }
         }
+
+    @staticmethod
+    def calculate_seasonality_strength(original, seasonal, residual):
+        """
+        Calculate seasonality strength using variance-based method
+        Seasonality Strength = Var(Seasonal) / (Var(Seasonal) + Var(Residual))
+        """
+        try:
+            # Remove any NaN or infinite values
+            seasonal_clean = seasonal[~np.isnan(seasonal) & ~np.isinf(seasonal)]
+            residual_clean = residual[~np.isnan(residual) & ~np.isinf(residual)]
+            
+            if len(seasonal_clean) == 0 or len(residual_clean) == 0:
+                return 0.0
+                
+            var_seasonal = np.var(seasonal_clean)
+            var_residual = np.var(residual_clean)
+            
+            # Avoid division by zero
+            if var_seasonal + var_residual == 0:
+                return 0.0
+                
+            strength = var_seasonal / (var_seasonal + var_residual)
+            return max(0.0, min(1.0, strength))  # Clamp between 0 and 1
+            
+        except Exception:
+            return 0.0
+
+    @staticmethod
+    def detect_seasonality_period(data):
+        """
+        Detect seasonality period using autocorrelation and FFT
+        """
+        try:
+            if len(data) < 6:
+                return None
+                
+            # Method 1: Autocorrelation
+            autocorr_period = AnalysisModules.find_autocorr_period(data)
+            
+            # Method 2: FFT (Frequency domain analysis)
+            fft_period = AnalysisModules.find_fft_period(data)
+            
+            # Choose the most reliable period
+            if autocorr_period is not None and fft_period is not None:
+                # If both methods agree (within 20%), use autocorr result
+                if abs(autocorr_period - fft_period) / max(autocorr_period, fft_period) < 0.2:
+                    return autocorr_period
+                # Otherwise, use the one that makes more sense given data length
+                elif autocorr_period <= len(data) // 3:
+                    return autocorr_period
+                elif fft_period <= len(data) // 3:
+                    return fft_period
+            
+            # Return whichever method found a reasonable period
+            if autocorr_period is not None and autocorr_period <= len(data) // 3:
+                return autocorr_period
+            elif fft_period is not None and fft_period <= len(data) // 3:
+                return fft_period
+                
+            return None
+            
+        except Exception:
+            return None
+
+    @staticmethod
+    def find_autocorr_period(data):
+        """Find period using autocorrelation"""
+        try:
+            # Remove trend first
+            detrended = signal.detrend(data)
+            
+            # Calculate autocorrelation
+            correlation = np.correlate(detrended, detrended, mode='full')
+            correlation = correlation[correlation.size // 2:]
+            
+            # Find peaks in autocorrelation
+            if len(correlation) < 3:
+                return None
+                
+            # Look for the first significant peak after lag 1
+            max_lag = min(len(correlation) - 1, len(data) // 2)
+            
+            for lag in range(2, max_lag):
+                # Check if this is a local maximum
+                if (correlation[lag] > correlation[lag-1] and 
+                    correlation[lag] > correlation[lag+1] and
+                    correlation[lag] > 0.1 * correlation[0]):  # At least 10% of max correlation
+                    return lag
+                    
+            return None
+            
+        except Exception:
+            return None
+
+    @staticmethod
+    def find_fft_period(data):
+        """Find period using FFT"""
+        try:
+            # Remove trend
+            detrended = signal.detrend(data)
+            
+            # Apply FFT
+            fft = np.fft.fft(detrended)
+            freqs = np.fft.fftfreq(len(data))
+            
+            # Get magnitude spectrum (positive frequencies only)
+            magnitude = np.abs(fft[:len(fft)//2])
+            freqs = freqs[:len(freqs)//2]
+            
+            # Find the dominant frequency (excluding DC component)
+            if len(magnitude) < 2:
+                return None
+                
+            # Skip DC component (index 0)
+            dominant_freq_idx = np.argmax(magnitude[1:]) + 1
+            dominant_freq = freqs[dominant_freq_idx]
+            
+            # Convert frequency to period
+            if dominant_freq > 0:
+                period = 1.0 / dominant_freq
+                # Return period only if it's reasonable (between 2 and half the data length)
+                if 2 <= period <= len(data) // 2:
+                    return int(round(period))
+                    
+            return None
+            
+        except Exception:
+            return None
+
+    @staticmethod
+    def classify_seasonality_strength(strength):
+        """Classify seasonality strength into categories"""
+        if strength >= 0.7:
+            return "Very Strong"
+        elif strength >= 0.5:
+            return "Strong"
+        elif strength >= 0.3:
+            return "Moderate"
+        elif strength >= 0.1:
+            return "Weak"
+        else:
+            return "Very Weak/No Seasonality"
+
+    @staticmethod
+    def interpret_seasonality(strength, period, data_length):
+        """Provide interpretation of seasonality analysis"""
+        interpretation = []
+        
+        # Strength interpretation
+        strength_desc = AnalysisModules.classify_seasonality_strength(strength)
+        interpretation.append(f"Seasonality strength: {strength_desc} ({strength:.3f})")
+        
+        # Period interpretation
+        if period is not None:
+            interpretation.append(f"Seasonality repeats approximately every {period} data points")
+            
+            # Provide context based on period length
+            if period <= 7:
+                interpretation.append("This suggests a short-term cyclical pattern")
+            elif period <= 30:
+                interpretation.append("This suggests a medium-term cyclical pattern")
+            else:
+                interpretation.append("This suggests a long-term cyclical pattern")
+                
+            # Check if we have enough data to capture multiple cycles
+            cycles_captured = data_length / period
+            if cycles_captured < 2:
+                interpretation.append(f"Warning: Only {cycles_captured:.1f} complete cycles in data - seasonality detection may be unreliable")
+            else:
+                interpretation.append(f"Data contains approximately {cycles_captured:.1f} complete seasonal cycles")
+        else:
+            interpretation.append("No clear seasonal period detected")
+        
+        # Recommendations
+        if strength >= 0.3 and period is not None:
+            interpretation.append("Recommendation: Seasonality is significant and should be considered in forecasting models")
+        elif strength >= 0.1:
+            interpretation.append("Recommendation: Weak seasonality detected - consider seasonal adjustment if needed")
+        else:
+            interpretation.append("Recommendation: No significant seasonality - seasonal models may not be necessary")
+        
+        return ". ".join(interpretation)
 
     @staticmethod
     def analyze_time_series(df, params):
@@ -486,7 +690,7 @@ class AnalysisModules:
                                 "weekly_strength": weekly_strength
                             }
                         
-                        # Decomposition
+                        # Enhanced Decomposition with seasonality analysis
                         decomposition = AnalysisModules.create_time_series_decomposition(cat_data, date_col, value_col)
                         if decomposition:
                             category_decompositions[cat] = decomposition
@@ -549,7 +753,7 @@ class AnalysisModules:
                 yaxis=dict(gridcolor='rgba(128,128,128,0.2)', title=value_col.title())
             )
             
-            # Overall decomposition
+            # Enhanced Overall decomposition with seasonality analysis
             overall_decomposition = AnalysisModules.create_time_series_decomposition(df, date_col, value_col)
             
             # Additional metrics
@@ -592,6 +796,13 @@ class AnalysisModules:
             insights.append(f"Pattern type: {pattern_analysis['pattern_type']} (confidence: {pattern_analysis['confidence']:.1%})")
             insights.append(f"Volatility assessment: {pattern_analysis['volatility_type']} with {pattern_analysis['pattern_strength']:.3f} strength")
 
+            # Add enhanced seasonality insights from decomposition
+            if overall_decomposition and 'seasonality_analysis' in overall_decomposition:
+                seasonality_info = overall_decomposition['seasonality_analysis']
+                insights.append(f"Advanced seasonality: {seasonality_info['strength_category']} (strength: {seasonality_info['strength']:.3f})")
+                if seasonality_info['period_points']:
+                    insights.append(f"Seasonal cycle: Repeats every {seasonality_info['period_points']} data points")
+
             response_data = {
                 "module": "time_series_analysis",
                 "analysis_type": "multi-category" if category_col and category_col in df.columns else "single-series",
@@ -601,7 +812,8 @@ class AnalysisModules:
                 "seasonality_analysis": {
                     "monthly_strength": seasonality_strength,
                     "weekly_strength": weekly_seasonality,
-                    "insights": overall_seasonality_insights if category_col and category_col in df.columns else seasonality_insights
+                    "insights": overall_seasonality_insights if category_col and category_col in df.columns else seasonality_insights,
+                    "advanced_analysis": overall_decomposition['seasonality_analysis'] if overall_decomposition and 'seasonality_analysis' in overall_decomposition else None
                 },
                 "volatility_metrics": {
                     "volatility": volatility,

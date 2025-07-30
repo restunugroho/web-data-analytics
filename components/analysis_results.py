@@ -516,21 +516,23 @@ def _render_single_series_trend_seasonality(results):
     </div>
     """, unsafe_allow_html=True)
 
+
+
 def _render_multi_category_trend_seasonality(results):
     """Render multi-category trend and seasonality analysis"""
     # Get category statistics from ['statistics']['categories']
     statistics = results.get('statistics', {})
     category_stats = statistics.get('categories', {})
-    category_seasonality = results.get('category_seasonality', {})
+    category_decompositions = results.get('category_decompositions', {})
     
     if not category_stats:
         st.info("📈 Category trend/seasonality data not available")
         return
-    
+
     st.markdown("#### 📈 Category Trend Comparison")
     
     colors = ['#2196f3', '#4caf50', '#ff9800', '#9c27b0', '#f44336', '#00bcd4']
-    
+
     # Trend comparison
     for i, (category, stats) in enumerate(category_stats.items()):
         trend_value = stats.get('trend_slope', 0)
@@ -545,52 +547,61 @@ def _render_multi_category_trend_seasonality(results):
         
         color = colors[i % len(colors)]
         
-        col1, col2 = st.columns([3, 1])
-        with col1:
-            st.markdown(f"""
-            <div style="background: linear-gradient(135deg, {color}15 0%, {color}25 100%); 
-                        border-left: 4px solid {color}; padding: 12px; margin: 5px 0; border-radius: 8px;">
-                <div style="font-weight: bold; color: {color}; font-size: 16px;">
-                    {trend_icon} {category}
-                </div>
-                <div style="font-size: 12px; color: #666; margin-top: 3px;">
-                    {trend_direction} trend (slope: {trend_value:+.4f})
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-    
-    # Seasonality comparison - if available
-    if category_seasonality:
+        st.markdown(f"""
+        <div style="background: linear-gradient(135deg, {color}15 0%, {color}25 100%);
+        border-left: 4px solid {color}; padding: 12px; margin: 5px 0; border-radius: 8px;">
+        <div style="font-weight: bold; color: {color}; font-size: 16px;">
+        {trend_icon} {category}
+        </div>
+        <div style="font-size: 12px; color: #666; margin-top: 3px;">
+        {trend_direction} trend (slope: {trend_value:+.4f})
+        </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # Seasonality comparison - get from category_decompositions
+    if category_decompositions:
         st.markdown("#### 🌊 Category Seasonality Comparison")
         
-        for i, (category, seasonality_strength) in enumerate(category_seasonality.items()):
-            if seasonality_strength > 0.3:
-                seasonality_level = "High"
-                seasonality_icon = "🔥"
-            elif seasonality_strength > 0.15:
-                seasonality_level = "Moderate"
-                seasonality_icon = "🔶"
-            else:
-                seasonality_level = "Low"
-                seasonality_icon = "🔵"
+        for i, (category, decomp_data) in enumerate(category_decompositions.items()):
+            seasonality_analysis = decomp_data.get('seasonality_analysis', {})
             
-            color = colors[i % len(colors)]
-            
-            st.markdown(f"""
-            <div style="background: linear-gradient(135deg, {color}15 0%, {color}25 100%); 
-                        border-left: 4px solid {color}; padding: 12px; margin: 5px 0; border-radius: 8px;">
+            if seasonality_analysis:
+                strength = seasonality_analysis.get('strength', 0)
+                period_points = seasonality_analysis.get('period_points', 'N/A')
+                interpretation = seasonality_analysis.get('interpretation', 'No interpretation available')
+                
+                if strength > 0.3:
+                    seasonality_level = "High"
+                    seasonality_icon = "🔥"
+                elif strength > 0.15:
+                    seasonality_level = "Moderate"
+                    seasonality_icon = "🔶"
+                else:
+                    seasonality_level = "Low"
+                    seasonality_icon = "🔵"
+                
+                color = colors[i % len(colors)]
+                
+                st.markdown(f"""
+                <div style="background: linear-gradient(135deg, {color}15 0%, {color}25 100%);
+                border-left: 4px solid {color}; padding: 12px; margin: 5px 0; border-radius: 8px;">
                 <div style="font-weight: bold; color: {color}; font-size: 16px;">
-                    {seasonality_icon} {category}
+                {seasonality_icon} {category}
                 </div>
                 <div style="font-size: 12px; color: #666; margin-top: 3px;">
-                    {seasonality_level} seasonality (strength: {seasonality_strength:.3f})
+                {seasonality_level} seasonality (strength: {strength:.3f}, period: {period_points} points)
                 </div>
-            </div>
-            """, unsafe_allow_html=True)
+                <div style="font-size: 11px; color: #888; margin-top: 2px; font-style: italic;">
+                {interpretation}
+                </div>
+                </div>
+                """, unsafe_allow_html=True)
     else:
-        # If no category_seasonality data, show message
+        # If no category_decompositions data, show message
         st.markdown("#### 🌊 Category Seasonality")
         st.info("🌊 Category-specific seasonality data not available in current analysis results")
+
 
 def _render_customer_trend_analysis(results):
     """Render customer analytics trend analysis"""

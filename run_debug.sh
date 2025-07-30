@@ -137,16 +137,16 @@ fi
 echo "✅ Backend started at http://localhost:8000"
 
 # Start frontend
-echo "🎨 Starting Streamlit frontend..."
-streamlit run app.py --server.headless true > logs/frontend.log 2>&1 &
-FRONTEND_PID=$!
+# echo "🎨 Starting Streamlit frontend..."
+# streamlit run app.py --server.headless true > logs/frontend.log 2>&1 &
+# FRONTEND_PID=$!
 
 # Check if frontend process started successfully
 sleep 1
-if ! is_process_running $FRONTEND_PID; then
-    echo "❌ Frontend process failed to start. Check logs/frontend.log for details."
-    exit 1
-fi
+# if ! is_process_running $FRONTEND_PID; then
+#     echo "❌ Frontend process failed to start. Check logs/frontend.log for details."
+#     exit 1
+# fi
 
 # Wait for frontend to be ready
 # if ! wait_for_service "http://localhost:8501/" "Frontend" 30; then
@@ -154,7 +154,7 @@ fi
 #     exit 1
 # fi
 
-echo "✅ Frontend started at http://localhost:8501"
+# echo "✅ Frontend started at http://localhost:8501"
 
 echo "
 🎉 Data Analytics MVP is now running!
@@ -176,10 +176,10 @@ while true; do
         exit 1
     fi
     
-    if ! is_process_running $FRONTEND_PID; then
-        echo "❌ Frontend process has stopped unexpectedly!"
-        exit 1
-    fi
+    # if ! is_process_running $FRONTEND_PID; then
+    #     echo "❌ Frontend process has stopped unexpectedly!"
+    #     exit 1
+    # fi
     
     sleep 5
 done
