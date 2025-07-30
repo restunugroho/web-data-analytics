@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import time
+import re
 from fe_utils.api_client import APIClient
 import logging
 
@@ -158,16 +159,57 @@ def _handle_time_series_preprocessing(columns, agg_counter):
             key=f"agg_method_{agg_counter}",
             help="Choose how to aggregate multiple values in the same time period"
         )
-        freq = st.selectbox(
-            "Frequency:", 
-            ["D", "W", "M", "Q"],
-            format_func=lambda x: {
-                "D": "Daily", "W": "Weekly", 
-                "M": "Monthly", "Q": "Quarterly"
-            }[x],
-            key=f"freq_{agg_counter}",
-            help="Choose the time frequency for aggregation"
-        )
+        
+        # Custom frequency with multiplier
+        col_freq_num, col_freq_unit = st.columns([1, 2])
+        
+        with col_freq_num:
+            freq_multiplier = st.number_input(
+                "Interval:",
+                min_value=1,
+                max_value=1000,
+                value=1,
+                step=1,
+                key=f"freq_multiplier_{agg_counter}",
+                help="Number of time units (e.g., 2 for '2 hours')"
+            )
+        
+        with col_freq_unit:
+            freq_unit = st.selectbox(
+                "Time Unit:", 
+                ["min", "H", "D", "W", "M", "Q"],
+                format_func=lambda x: {
+                    "min": "Minute(s)", 
+                    "H": "Hour(s)",
+                    "D": "Day(s)", 
+                    "W": "Week(s)", 
+                    "M": "Month(s)", 
+                    "Q": "Quarter(s)"
+                }[x],
+                key=f"freq_unit_{agg_counter}",
+                help="Choose the time unit for aggregation"
+            )
+        
+        # Combine multiplier and unit to create pandas frequency string
+        freq = f"{freq_multiplier}{freq_unit}"
+        
+        # Display the resulting frequency
+        freq_display = {
+            "min": "minute(s)", 
+            "H": "hour(s)",
+            "D": "day(s)", 
+            "W": "week(s)", 
+            "M": "month(s)", 
+            "Q": "quarter(s)"
+        }[freq_unit]
+        
+        st.info(f"📅 Aggregation frequency: Every {freq_multiplier} {freq_display}")
+        
+        # Show additional info based on frequency selection
+        if freq_unit in ["min", "H"] and freq_multiplier == 1:
+            st.info("ℹ️ High-frequency aggregation selected. Ensure your data has sufficient granularity.")
+        elif freq_unit in ["min", "H"]:
+            st.info(f"ℹ️ Custom high-frequency aggregation ({freq_multiplier} {freq_display}) selected.")
         
         preprocessing_params.update({
             'agg_method': agg_method,
@@ -236,7 +278,40 @@ def _handle_data_aggregation(preprocessing_params):
             st.session_state.data_just_aggregated = True
             st.session_state.aggregation_counter = st.session_state.get('aggregation_counter', 0) + 1
             
-            st.success("✅ Data aggregated successfully!")
+            # Parse frequency for success message
+            freq = preprocessing_params['freq']
+            freq_pattern = re.match(r'^(\d+)([a-zA-Z]+)$', freq)
+            
+            if freq_pattern:
+                freq_multiplier = int(freq_pattern.group(1))
+                freq_unit = freq_pattern.group(2)
+            else:
+                # Simple format fallback
+                freq_multiplier = 1
+                freq_unit = freq
+            
+            # Show success message with frequency info
+            if freq_multiplier == 1:
+                freq_display_success = {
+                    "min": "minutely", 
+                    "H": "hourly",
+                    "D": "daily", 
+                    "W": "weekly", 
+                    "M": "monthly", 
+                    "Q": "quarterly"
+                }.get(freq_unit, freq)
+            else:
+                freq_unit_display = {
+                    "min": "minute", 
+                    "H": "hour",
+                    "D": "day", 
+                    "W": "week", 
+                    "M": "month", 
+                    "Q": "quarter"
+                }.get(freq_unit, freq_unit)
+                freq_display_success = f"every {freq_multiplier} {freq_unit_display}{'s' if freq_multiplier > 1 else ''}"
+            
+            st.success(f"✅ Data aggregated successfully to {freq_display_success} frequency!")
             return new_data
     
     return None

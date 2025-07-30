@@ -1,8 +1,9 @@
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, validator
 import pandas as pd
 import numpy as np
+import re
 from io import StringIO
 import json, logging, sys
 from typing import Dict, List, Optional, Any
@@ -73,6 +74,38 @@ class ModelComparisonRequest(BaseModel):
     value_col: str
     comparison_models: Optional[List[str]] = ['linear_regression', 'random_forest', 'ets', 'naive']
     category_col: Optional[str] = None
+
+class AggregationRequest(BaseModel):
+    session_id: str
+    datetime_col: str
+    value_col: str
+    agg_method: str
+    freq: str  # Now supports custom frequencies like "2H", "30min", "1D"
+    category_col: Optional[str] = None
+    
+    @validator('freq')
+    def validate_frequency(cls, v):
+        # Support both simple format (D, H, min) and custom format (2H, 30min, 5D)
+        freq_pattern = re.match(r'^(\d+)([a-zA-Z]+)$', v)
+        if freq_pattern:
+            multiplier = int(freq_pattern.group(1))
+            unit = freq_pattern.group(2)
+            valid_units = ['min', 'H', 'D', 'W', 'M', 'Q']
+            if unit not in valid_units or multiplier < 1 or multiplier > 1000:
+                raise ValueError(f'Invalid frequency: {v}')
+        else:
+            # Simple format validation
+            valid_simple = ['min', 'H', 'D', 'W', 'M', 'Q']
+            if v not in valid_simple:
+                raise ValueError(f'Frequency must be one of: {", ".join(valid_simple)} or custom format like "2H", "30min"')
+        return v
+    
+    @validator('agg_method')
+    def validate_aggregation_method(cls, v):
+        valid_methods = ['sum', 'mean', 'count', 'median']
+        if v not in valid_methods:
+            raise ValueError(f'Aggregation method must be one of: {", ".join(valid_methods)}')
+        return v
 
 # Sample datasets
 SAMPLE_DATASETS = {
@@ -192,8 +225,8 @@ def aggregate_data(request: AggregationRequest):
         raise HTTPException(status_code=404, detail="Session not found")
     
     df = data_store[request.session_id].copy()
-    
     try:
+        # Parse datetime column
         df[request.datetime_col] = parse_datetime_flexible(df[request.datetime_col])
         
         if df[request.datetime_col].isna().any():
@@ -205,6 +238,20 @@ def aggregate_data(request: AggregationRequest):
             raise HTTPException(status_code=400, detail="No valid datetime values found")
         
         df_agg = df.set_index(request.datetime_col)
+        
+        # Validate and parse frequency - support custom format like "2H", "30min"
+        freq_pattern = re.match(r'^(\d+)([a-zA-Z]+)$', request.freq)
+        if freq_pattern:
+            freq_multiplier = int(freq_pattern.group(1))
+            freq_unit = freq_pattern.group(2)
+            valid_freq_units = ['min', 'H', 'D', 'W', 'M', 'Q']
+            if freq_unit not in valid_freq_units or freq_multiplier < 1:
+                raise ValueError(f"Invalid frequency format: {request.freq}")
+        else:
+            # Fallback for simple formats like "D", "H" (backwards compatibility)
+            valid_frequencies = ['min', 'H', 'D', 'W', 'M', 'Q']
+            if request.freq not in valid_frequencies:
+                raise ValueError(f"Unsupported frequency: {request.freq}")
         
         # Aggregation logic
         agg_methods = {
@@ -231,9 +278,12 @@ def aggregate_data(request: AggregationRequest):
                 'value': result.values
             }).reset_index(drop=True)
         
+        # Remove NaN values
+        agg_df = agg_df.dropna()
+        
         agg_session_id = f"{request.session_id}_agg"
         data_store[agg_session_id] = agg_df
-
+        
         logging.info('in agg')
         logging.info(agg_df)
         
@@ -243,10 +293,11 @@ def aggregate_data(request: AggregationRequest):
             "data": agg_df.to_dict('records'),
             "has_category": request.category_col is not None
         }
-    
+        
     except Exception as e:
         logging.error(f"Aggregation error: {str(e)}")
         raise HTTPException(status_code=400, detail=f"Aggregation error: {str(e)}")
+
 
 @app.get("/session/{session_id}/data")
 def get_session_data(session_id: str, limit: int = 100):

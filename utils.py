@@ -1,13 +1,13 @@
 import pandas as pd
 import numpy as np
 
+
 def parse_datetime_flexible(date_series):
     """Flexibly parse datetime with multiple format attempts"""
     formats = [
         '%Y-%m-%d', '%d/%m/%Y', '%m/%d/%Y', '%Y-%m-%d %H:%M:%S',
         '%d/%m/%Y %H:%M', '%m/%d/%Y %H:%M', '%Y%m%d', '%d-%m-%Y', '%m-%d-%Y'
     ]
-    
     try:
         return pd.to_datetime(date_series, infer_datetime_format=True)
     except:
