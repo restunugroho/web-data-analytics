@@ -1,35 +1,190 @@
-2025-07-23 16:56:32,656 - INFO - ✅ Logging initialized di FastAPI
-INFO:     Started server process [33705]
+2025-07-29 12:35:53,386 - INFO - ✅ generate manufacturing data
+2025-07-29 12:35:53,663 - INFO - ✅ generate trading data
+2025-07-29 12:35:55,544 - INFO - ✅ generate healthcare data
+2025-07-29 12:36:00,290 - INFO - ✅ generate flight data
+INFO:     Started server process [801446]
 INFO:     Waiting for application startup.
 INFO:     Application startup complete.
 INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
-INFO:     127.0.0.1:57690 - "GET / HTTP/1.1" 200 OK
-INFO:     127.0.0.1:38882 - "GET /sample-datasets HTTP/1.1" 200 OK
-INFO:     127.0.0.1:38884 - "GET /sample-datasets HTTP/1.1" 200 OK
-INFO:     127.0.0.1:46584 - "GET /sample-datasets HTTP/1.1" 200 OK
-2025-07-23 16:57:05,872 - INFO - dataset_key
-2025-07-23 16:57:05,872 - INFO - manufacturing_production
-2025-07-23 16:57:05,872 - INFO - SAMPLE_DATASETS
-2025-07-23 16:57:05,872 - INFO - ['ecommerce_sales', 'customer_transactions', 'manufacturing_production', 'financial_trading', 'healthcare_admissions']
-2025-07-23 16:57:05,873 - INFO - data_store session created
-2025-07-23 16:57:05,873 - INFO - sample_manufacturing_production_20250723_165705
-2025-07-23 16:57:05,873 - INFO - df shape
-2025-07-23 16:57:05,873 - INFO - (26281, 6)
-INFO:     127.0.0.1:46588 - "POST /load-sample/manufacturing_production HTTP/1.1" 200 OK
-INFO:     127.0.0.1:46602 - "GET /sample-datasets HTTP/1.1" 200 OK
-INFO:     127.0.0.1:57966 - "GET /sample-datasets HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54362 - "GET /sample-datasets HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54376 - "GET /sample-datasets HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54380 - "GET /sample-datasets HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54388 - "POST /aggregate-data HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54402 - "GET /sample-datasets HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54418 - "GET /sample-datasets HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54422 - "POST /analyze HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54428 - "GET /sample-datasets HTTP/1.1" 200 OK
-INFO:     127.0.0.1:36608 - "GET /sample-datasets HTTP/1.1" 200 OK
-INFO:     127.0.0.1:36622 - "GET /sample-datasets HTTP/1.1" 200 OK
-INFO:     127.0.0.1:36632 - "POST /aggregate-data HTTP/1.1" 200 OK
-INFO:     127.0.0.1:36646 - "GET /sample-datasets HTTP/1.1" 200 OK
-INFO:     127.0.0.1:36660 - "GET /sample-datasets HTTP/1.1" 200 OK
-INFO:     127.0.0.1:36676 - "POST /analyze HTTP/1.1" 200 OK
-INFO:     127.0.0.1:36686 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40326 - "GET /health HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:40330 - "GET /health HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:40346 - "GET /health HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:40348 - "GET /health HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:40354 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43288 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48382 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48384 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48394 - "POST /load-sample/airline_flights HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58754 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51208 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51222 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41848 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41850 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51868 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50818 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50832 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50836 - "POST /load-sample/airline_flights HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54036 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45750 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45752 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50162 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50172 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59110 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59124 - "GET /sample-datasets HTTP/1.1" 200 OK
+2025-07-29 16:55:58,831 - INFO - in agg
+2025-07-29 16:55:58,831 - INFO -     category       date   value
+0    CGK-DPS 2022-01-02   49864
+1    CGK-DPS 2022-01-09   94833
+2    CGK-DPS 2022-01-16   76684
+3    CGK-DPS 2022-01-23   73713
+4    CGK-DPS 2022-01-30   73345
+..       ...        ...     ...
+311  CGK-SBY 2024-12-08  163355
+312  CGK-SBY 2024-12-15  177785
+313  CGK-SBY 2024-12-22  239760
+314  CGK-SBY 2024-12-29  338550
+315  CGK-SBY 2025-01-05   75665
+
+[316 rows x 3 columns]
+INFO:     127.0.0.1:59130 - "POST /aggregate-data HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35348 - "GET /sample-datasets HTTP/1.1" 200 OK
+2025-07-29 16:56:06,173 - INFO - Analyzing time series
+2025-07-29 16:56:06,173 - INFO - Data shape: (316, 3)
+2025-07-29 16:56:06,173 - INFO - Time series analysis - Date col: date, Value col: value
+2025-07-29 16:56:06,173 - INFO - Data shape: (316, 3)
+INFO:     127.0.0.1:35352 - "POST /analyze/time-series HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35356 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33472 - "GET /sample-datasets HTTP/1.1" 200 OK
+2025-07-29 17:00:39,434 - INFO - Analyzing time series
+2025-07-29 17:00:39,434 - INFO - Data shape: (316, 3)
+2025-07-29 17:00:39,434 - INFO - Time series analysis - Date col: date, Value col: value
+2025-07-29 17:00:39,434 - INFO - Data shape: (316, 3)
+INFO:     127.0.0.1:33484 - "POST /analyze/time-series HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33490 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60980 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49164 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47370 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36588 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36882 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55988 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55992 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56002 - "POST /load-sample/airline_flights HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52528 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47972 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48498 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48514 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48528 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50546 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50562 - "GET /sample-datasets HTTP/1.1" 200 OK
+2025-07-30 06:38:14,194 - INFO - in agg
+2025-07-30 06:38:14,195 - INFO -     category       date   value
+0    CGK-DPS 2022-01-02   49864
+1    CGK-DPS 2022-01-09   94833
+2    CGK-DPS 2022-01-16   76684
+3    CGK-DPS 2022-01-23   73713
+4    CGK-DPS 2022-01-30   73345
+..       ...        ...     ...
+311  CGK-SBY 2024-12-08  163355
+312  CGK-SBY 2024-12-15  177785
+313  CGK-SBY 2024-12-22  239760
+314  CGK-SBY 2024-12-29  338550
+315  CGK-SBY 2025-01-05   75665
+
+[316 rows x 3 columns]
+INFO:     127.0.0.1:50568 - "POST /aggregate-data HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49064 - "GET /sample-datasets HTTP/1.1" 200 OK
+2025-07-30 06:38:30,000 - INFO - Analyzing time series
+2025-07-30 06:38:30,000 - INFO - Data shape: (316, 3)
+2025-07-30 06:38:30,001 - INFO - Time series analysis - Date col: date, Value col: value
+2025-07-30 06:38:30,001 - INFO - Data shape: (316, 3)
+INFO:     127.0.0.1:49070 - "POST /analyze/time-series HTTP/1.1" 200 OK
+INFO:     127.0.0.1:34476 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41026 - "GET /sample-datasets HTTP/1.1" 200 OK
+2025-07-30 06:44:23,148 - INFO - Analyzing time series
+2025-07-30 06:44:23,148 - INFO - Data shape: (316, 3)
+2025-07-30 06:44:23,148 - INFO - Time series analysis - Date col: date, Value col: value
+2025-07-30 06:44:23,148 - INFO - Data shape: (316, 3)
+INFO:     127.0.0.1:41038 - "POST /analyze/time-series HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38096 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38100 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39550 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39566 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39582 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53698 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53704 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53264 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41120 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49232 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35284 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49778 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49780 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49784 - "POST /load-sample/airline_flights HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58838 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42844 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42854 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42868 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:37522 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:37528 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:37542 - "GET /sample-datasets HTTP/1.1" 200 OK
+2025-07-30 06:50:18,903 - INFO - in agg
+2025-07-30 06:50:18,903 - INFO -     category       date   value
+0    CGK-DPS 2022-01-02   49864
+1    CGK-DPS 2022-01-09   94833
+2    CGK-DPS 2022-01-16   76684
+3    CGK-DPS 2022-01-23   73713
+4    CGK-DPS 2022-01-30   73345
+..       ...        ...     ...
+311  CGK-SBY 2024-12-08  163355
+312  CGK-SBY 2024-12-15  177785
+313  CGK-SBY 2024-12-22  239760
+314  CGK-SBY 2024-12-29  338550
+315  CGK-SBY 2025-01-05   75665
+
+[316 rows x 3 columns]
+INFO:     127.0.0.1:37552 - "POST /aggregate-data HTTP/1.1" 200 OK
+INFO:     127.0.0.1:34762 - "GET /sample-datasets HTTP/1.1" 200 OK
+2025-07-30 06:50:25,149 - INFO - Analyzing time series
+2025-07-30 06:50:25,149 - INFO - Data shape: (316, 3)
+2025-07-30 06:50:25,149 - INFO - Time series analysis - Date col: date, Value col: value
+2025-07-30 06:50:25,149 - INFO - Data shape: (316, 3)
+INFO:     127.0.0.1:34768 - "POST /analyze/time-series HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49488 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57468 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57482 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57498 - "POST /load-sample/airline_flights HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50882 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41590 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41604 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45246 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45254 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45262 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45276 - "GET /sample-datasets HTTP/1.1" 200 OK
+2025-07-30 07:14:19,885 - INFO - in agg
+2025-07-30 07:14:19,885 - INFO -     category       date   value
+0    CGK-DPS 2022-01-02   49864
+1    CGK-DPS 2022-01-09   94833
+2    CGK-DPS 2022-01-16   76684
+3    CGK-DPS 2022-01-23   73713
+4    CGK-DPS 2022-01-30   73345
+..       ...        ...     ...
+311  CGK-SBY 2024-12-08  163355
+312  CGK-SBY 2024-12-15  177785
+313  CGK-SBY 2024-12-22  239760
+314  CGK-SBY 2024-12-29  338550
+315  CGK-SBY 2025-01-05   75665
+
+[316 rows x 3 columns]
+INFO:     127.0.0.1:45292 - "POST /aggregate-data HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57184 - "GET /sample-datasets HTTP/1.1" 200 OK
+2025-07-30 07:14:26,741 - INFO - Analyzing time series
+2025-07-30 07:14:26,741 - INFO - Data shape: (316, 3)
+2025-07-30 07:14:26,741 - INFO - Time series analysis - Date col: date, Value col: value
+2025-07-30 07:14:26,741 - INFO - Data shape: (316, 3)
+INFO:     127.0.0.1:57196 - "POST /analyze/time-series HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54560 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57602 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42282 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42290 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42298 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42408 - "GET /sample-datasets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42422 - "GET /sample-datasets HTTP/1.1" 200 OK

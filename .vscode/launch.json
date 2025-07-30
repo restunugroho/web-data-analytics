@@ -1,0 +1,35 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+  
+      {
+        "name": "🔧 Debug FastAPI (Uvicorn)",
+        "type": "python",
+        "request": "launch",
+        "module": "uvicorn",
+        "args": [
+          "main:app",       // Ganti jika app FastAPI kamu bukan di main.py
+          "--reload",
+          "--port", "8000"
+        ],
+        "jinja": true,
+        "justMyCode": false,
+        "console": "integratedTerminal"
+      },
+  
+      {
+        "name": "🎨 Debug Streamlit",
+        "type": "python",
+        "request": "launch",
+        "module": "streamlit",
+        "args": [
+          "run",
+          "app.py",                 // Ganti kalau file utama bukan app.py
+          "--server.headless=true",
+          "--server.port=8501"
+        ],
+        "console": "integratedTerminal"
+      }
+    ]
+  }
+  

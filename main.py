@@ -60,6 +60,20 @@ class AnalysisRequest(BaseModel):
     module: str
     parameters: Dict
 
+class ForecastRequest(BaseModel):
+    session_id: str
+    date_col: str
+    value_col: str
+    model_type: str = 'linear_regression'
+    category_col: Optional[str] = None
+
+class ModelComparisonRequest(BaseModel):
+    session_id: str
+    date_col: str
+    value_col: str
+    comparison_models: Optional[List[str]] = ['linear_regression', 'random_forest', 'ets', 'naive']
+    category_col: Optional[str] = None
+
 # Sample datasets
 SAMPLE_DATASETS = {
     "ecommerce_sales": {
@@ -104,14 +118,9 @@ SAMPLE_DATASETS = {
         "description": "Daily flight data showing strong upward trend in passenger traffic with seasonal patterns (YYYY-MM-DD format)",
         "data": DataGenerators.generate_flight_data()
     },
-    # "school_book_sales": {
-    #     "name": "School Book Sales Demand",
-    #     "description": "Educational book sales with extremely strong seasonality around school seasons (DD/MM/YYYY format)", 
-    #     "data": DataGenerators.generate_school_book_data()
-    # }
 }
 
-# Routes
+# Basic Routes
 @app.get("/")
 def read_root():
     return {"message": "Data Analytics", "version": "1.0.0"}
@@ -128,6 +137,7 @@ def get_sample_datasets():
         for key, value in SAMPLE_DATASETS.items()
     }
 
+# Data Management Routes
 @app.post("/load-sample/{dataset_key}")
 def load_sample_dataset(dataset_key: str):
     if dataset_key not in SAMPLE_DATASETS:
@@ -238,44 +248,6 @@ def aggregate_data(request: AggregationRequest):
         logging.error(f"Aggregation error: {str(e)}")
         raise HTTPException(status_code=400, detail=f"Aggregation error: {str(e)}")
 
-@app.post("/analyze")
-def analyze_data(request: AnalysisRequest):
-    if request.session_id not in data_store:
-        raise HTTPException(status_code=404, detail="Session not found")
-    
-    df = data_store[request.session_id].copy()
-    
-    try:
-        if request.module == "time_series":
-            logging.info('analyze time series')
-            logging.info(df.shape)
-            return AnalysisModules.analyze_time_series(df, request.parameters)
-        elif request.module == "customer":
-            return AnalysisModules.analyze_customer(df, request.parameters)
-        else:
-            raise HTTPException(status_code=400, detail="Unsupported module")
-    
-    except Exception as e:
-        logging.error(f"Analysis error: {str(e)}")
-        raise HTTPException(status_code=400, detail=f"Analysis error: {str(e)}")
-
-@app.post("/compare-models")
-def compare_models_endpoint(request: AnalysisRequest):
-    if request.session_id not in data_store:
-        raise HTTPException(status_code=404, detail="Session not found")
-    
-    df = data_store[request.session_id].copy()
-    
-    try:
-        if request.module == "time_series":
-            return ForecastingModels.compare_forecasting_models(df, request.parameters)
-        else:
-            raise HTTPException(status_code=400, detail="Model comparison only available for time series")
-    
-    except Exception as e:
-        logging.error(f"Model comparison error: {str(e)}")
-        raise HTTPException(status_code=400, detail=f"Model comparison error: {str(e)}")
-
 @app.get("/session/{session_id}/data")
 def get_session_data(session_id: str, limit: int = 100):
     if session_id not in data_store:
@@ -287,6 +259,265 @@ def get_session_data(session_id: str, limit: int = 100):
         "shape": df.shape,
         "data": df.head(limit).to_dict('records')
     }
+
+# Analysis Routes
+@app.post("/analyze/time-series")
+def analyze_time_series(request: AnalysisRequest):
+    """Analyze time series data with statistical insights and patterns"""
+    if request.session_id not in data_store:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    df = data_store[request.session_id].copy()
+    
+    try:
+        logging.info('Analyzing time series')
+        logging.info(f"Data shape: {df.shape}")
+        return AnalysisModules.analyze_time_series(df, request.parameters)
+    
+    except Exception as e:
+        logging.error(f"Time series analysis error: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Time series analysis error: {str(e)}")
+
+@app.post("/analyze/customer")
+def analyze_customer(request: AnalysisRequest):
+    """Perform customer analysis (RFM segmentation)"""
+    if request.session_id not in data_store:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    df = data_store[request.session_id].copy()
+    
+    try:
+        logging.info('Analyzing customer data')
+        logging.info(f"Data shape: {df.shape}")
+        return AnalysisModules.analyze_customer(df, request.parameters)
+    
+    except Exception as e:
+        logging.error(f"Customer analysis error: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Customer analysis error: {str(e)}")
+
+# Forecasting Routes
+@app.post("/forecast/single-model")
+def forecast_single_model(request: ForecastRequest):
+    """Generate forecast using a single specified model"""
+    if request.session_id not in data_store:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    df = data_store[request.session_id].copy()
+    
+    try:
+        logging.info(f'Creating forecast with {request.model_type} model')
+        logging.info(f"Data shape: {df.shape}")
+        
+        # Parse datetime column
+        df[request.date_col] = parse_datetime_flexible(df[request.date_col])
+        df = df.dropna(subset=[request.date_col]).sort_values(request.date_col)
+        
+        if df.empty:
+            raise ValueError("No valid datetime data found")
+        
+        if len(df) < 10:
+            raise ValueError("Insufficient data for forecasting (minimum 10 points required)")
+        
+        # Handle category-based forecasting
+        if request.category_col and request.category_col in df.columns:
+            categories = df[request.category_col].unique()
+            category_forecasts = {}
+            
+            for cat in categories:
+                cat_data = df[df[request.category_col] == cat].copy()
+                if len(cat_data) >= 10:
+                    forecast_data, forecast_insight, forecast_error = ForecastingModels.create_forecast(
+                        cat_data, request.date_col, request.value_col, model_type=request.model_type
+                    )
+                    if forecast_data and forecast_error is None:
+                        category_forecasts[cat] = {
+                            'forecast': forecast_data,
+                            'insight': forecast_insight,
+                            'status': 'success'
+                        }
+                    else:
+                        category_forecasts[cat] = {
+                            'status': 'failed',
+                            'error': forecast_error or 'Forecast generation failed'
+                        }
+                else:
+                    category_forecasts[cat] = {
+                        'status': 'failed',
+                        'error': f'Insufficient data for category {cat} (need at least 10 points)'
+                    }
+            
+            return {
+                "forecast_type": "multi-category",
+                "model_type": request.model_type,
+                "categories": list(categories),
+                "category_forecasts": category_forecasts,
+                "total_categories": len(categories),
+                "successful_forecasts": len([f for f in category_forecasts.values() if f['status'] == 'success'])
+            }
+        
+        else:
+            # Single series forecasting
+            forecast_data, forecast_insight, forecast_error = ForecastingModels.create_forecast(
+                df, request.date_col, request.value_col, model_type=request.model_type
+            )
+            
+            if forecast_error:
+                raise ValueError(forecast_error)
+            
+            return {
+                "forecast_type": "single-series",
+                "model_type": request.model_type,
+                "forecast": forecast_data,
+                "insight": forecast_insight,
+                "status": "success"
+            }
+    
+    except Exception as e:
+        logging.error(f"Single model forecast error: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Forecast error: {str(e)}")
+
+@app.post("/forecast/compare-models")
+def compare_forecasting_models(request: ModelComparisonRequest):
+    """Compare multiple forecasting models and rank them by performance"""
+    if request.session_id not in data_store:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    df = data_store[request.session_id].copy()
+    
+    try:
+        logging.info('Comparing forecasting models')
+        logging.info(f"Models to compare: {request.comparison_models}")
+        logging.info(f"Data shape: {df.shape}")
+        
+        # Prepare parameters for comparison
+        comparison_params = {
+            'date_col': request.date_col,
+            'value_col': request.value_col,
+            'comparison_models': request.comparison_models,
+            'category_col': request.category_col
+        }
+        
+        # Handle category-based comparison
+        if request.category_col and request.category_col in df.columns:
+            categories = df[request.category_col].unique()
+            category_comparisons = {}
+            
+            for cat in categories:
+                cat_data = df[df[request.category_col] == cat].copy()
+                if len(cat_data) >= 10:
+                    try:
+                        comparison_result = ForecastingModels.compare_forecasting_models(
+                            cat_data, comparison_params
+                        )
+                        category_comparisons[cat] = {
+                            'comparison': comparison_result,
+                            'status': 'success'
+                        }
+                    except Exception as e:
+                        category_comparisons[cat] = {
+                            'status': 'failed',
+                            'error': str(e)
+                        }
+                else:
+                    category_comparisons[cat] = {
+                        'status': 'failed',
+                        'error': f'Insufficient data for category {cat} (need at least 10 points)'
+                    }
+            
+            return {
+                "comparison_type": "multi-category",
+                "categories": list(categories),
+                "category_comparisons": category_comparisons,
+                "models_tested": request.comparison_models,
+                "total_categories": len(categories),
+                "successful_comparisons": len([c for c in category_comparisons.values() if c['status'] == 'success'])
+            }
+        
+        else:
+            # Single series comparison
+            comparison_result = ForecastingModels.compare_forecasting_models(df, comparison_params)
+            
+            return {
+                "comparison_type": "single-series",
+                "comparison": comparison_result,
+                "models_tested": request.comparison_models,
+                "status": "success"
+            }
+    
+    except Exception as e:
+        logging.error(f"Model comparison error: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Model comparison error: {str(e)}")
+
+@app.get("/forecast/available-models")
+def get_available_models():
+    """Get list of available forecasting models"""
+    return {
+        "models": [
+            {
+                "key": "linear_regression",
+                "name": "Linear Regression",
+                "description": "Simple linear trend model with seasonal features",
+                "complexity": "Low",
+                "best_for": "Data with clear trends and minimal noise"
+            },
+            {
+                "key": "random_forest",
+                "name": "Random Forest",
+                "description": "Ensemble model that captures complex patterns",
+                "complexity": "Medium",
+                "best_for": "Data with complex seasonality and non-linear patterns"
+            },
+            {
+                "key": "naive",
+                "name": "Naive Forecast",
+                "description": "Uses last observed value as forecast",
+                "complexity": "Very Low",
+                "best_for": "Baseline comparison and stable data"
+            },
+            {
+                "key": "moving_average",
+                "name": "Moving Average",
+                "description": "Average of recent observations",
+                "complexity": "Low",
+                "best_for": "Smoothing noisy data and identifying trends"
+            },
+            {
+                "key": "ets",
+                "name": "Exponential Smoothing",
+                "description": "Weighted average giving more weight to recent observations",
+                "complexity": "Medium",
+                "best_for": "Data with trend and seasonal patterns"
+            }
+        ]
+    }
+
+# Legacy route for backward compatibility (can be removed later)
+@app.post("/analyze")
+def analyze_data_legacy(request: AnalysisRequest):
+    """Legacy analyze endpoint - redirects to appropriate specialized endpoint"""
+    if request.module == "time_series":
+        return analyze_time_series(request)
+    elif request.module == "customer":
+        return analyze_customer(request)
+    else:
+        raise HTTPException(status_code=400, detail="Unsupported module. Use /analyze/time-series or /analyze/customer")
+
+# Legacy route for backward compatibility (can be removed later)
+@app.post("/compare-models")
+def compare_models_legacy(request: AnalysisRequest):
+    """Legacy compare models endpoint - redirects to forecast comparison"""
+    if request.module == "time_series":
+        # Convert AnalysisRequest to ModelComparisonRequest
+        comparison_request = ModelComparisonRequest(
+            session_id=request.session_id,
+            date_col=request.parameters.get('date_col', 'date'),
+            value_col=request.parameters.get('value_col', 'value'),
+            comparison_models=request.parameters.get('comparison_models', ['linear_regression', 'random_forest', 'ets', 'naive']),
+            category_col=request.parameters.get('category_col')
+        )
+        return compare_forecasting_models(comparison_request)
+    else:
+        raise HTTPException(status_code=400, detail="Model comparison only available for time series. Use /forecast/compare-models")
 
 if __name__ == "__main__":
     import uvicorn

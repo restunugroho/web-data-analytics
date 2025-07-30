@@ -2,102 +2,41 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-import plotly.express as px
 import json
+import logging
 from fe_utils.session_state import clear_session
 
 def render_analysis_results_tab():
-    """Render the analysis results tab"""
-    st.header("📊 Analysis Results")
+    """Render the simplified analysis results tab - focused on trend, seasonality, statistics and chart"""
+    st.header("📈 Analysis Results")
     
     if st.session_state.analysis_results is None:
-        st.info("🔍 Run analysis in the Data Processing tab to see results here")
+        st.info("🔍 Run analysis in the Analysis tab to see results here")
         return
     
     results = st.session_state.analysis_results
     
-    # Key insights section - more compact
-    _render_key_insights(results)
-    
-    # Main visualization
+    # Main visualization with interactive features
     _render_main_visualization(results)
     
-    # Statistics and analysis
+    # Statistics and analysis in columns
     col1, col2 = st.columns(2)
     with col1:
         _render_key_statistics(results)
     with col2:
-        _render_advanced_analysis(results)
-    
-    # Model comparison results if available
-    if hasattr(st.session_state, 'model_comparison') and st.session_state.model_comparison:
-        _render_model_comparison_results()
-    
-    # Export and actions
-    _render_export_section()
-
-def _render_key_insights(results):
-    """Render key insights in a more compact format"""
-    st.subheader("💡 Key Insights")
-    
-    # Create a more compact insight display
-    insights = results.get('insights', [])
-    
-    # Show first 4 insights in a 2x2 grid
-    if len(insights) >= 4:
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            for i in range(0, min(4, len(insights)), 2):
-                st.markdown(f"""
-                <div class="insight-card">
-                    <strong>📈 Insight {i+1}:</strong> {insights[i]}
-                </div>
-                """, unsafe_allow_html=True)
-        
-        with col2:
-            for i in range(1, min(4, len(insights)), 2):
-                st.markdown(f"""
-                <div class="insight-card">
-                    <strong>📊 Insight {i+1}:</strong> {insights[i]}
-                </div>
-                """, unsafe_allow_html=True)
-        
-        # Show remaining insights in expandable section
-        if len(insights) > 4:
-            with st.expander(f"📋 View {len(insights) - 4} More Insights", expanded=False):
-                for i in range(4, len(insights)):
-                    st.markdown(f"""
-                    <div class="insight-card">
-                        <strong>📈 Insight {i+1}:</strong> {insights[i]}
-                    </div>
-                    """, unsafe_allow_html=True)
-    else:
-        # Show all insights if less than 4
-        for i, insight in enumerate(insights):
-            st.markdown(f"""
-            <div class="insight-card">
-                <strong>📈 Insight {i+1}:</strong> {insight}
-            </div>
-            """, unsafe_allow_html=True)
-    
-    # Detailed seasonality insights for time series
-    if results['module'] == 'time_series' and results.get('seasonality_insights'):
-        with st.expander("🌊 Detailed Seasonality Analysis", expanded=False):
-            for insight in results['seasonality_insights']:
-                st.markdown(f"• {insight}")
+        _render_trend_seasonality_analysis(results)
 
 def _render_main_visualization(results):
-    """Render main visualization based on module type"""
-    if results['module'] == 'time_series':
+    """Render main visualization with interactive options"""
+    st.subheader("📊 Interactive Visualization")
+    
+    if 'time_series' in results['module']:
         _render_time_series_visualization(results)
     else:
         _render_other_visualization(results)
 
 def _render_time_series_visualization(results):
     """Render time series visualization with interactive options"""
-    st.subheader("📈 Interactive Visualization")
-    
     # Category filters if available
     selected_categories = _render_category_filters(results)
     
@@ -108,94 +47,106 @@ def _render_time_series_visualization(results):
     if 'plot' in results:
         fig = _create_enhanced_chart(results, selected_categories, chart_options)
         st.plotly_chart(fig, use_container_width=True)
-    
-    # Decomposition charts
-    if chart_options.get('show_decomposition'):
-        _render_decomposition_charts(results, selected_categories)
 
 def _render_category_filters(results):
     """Render category filter controls"""
     selected_categories = []
     
-    if results.get('has_categories', False):
-        st.markdown("""
-        <div class="filter-container">
-            <h4 style="margin-top: 0; color: #155724;">🏷️ Category Filters</h4>
-        </div>
-        """, unsafe_allow_html=True)
+    # Check if we have category data
+    has_categories = results.get('has_categories', False)
+    categories_list = results.get('categories_list', [])
+    
+    # Also check if the original chart has multiple traces (indicating categories)
+    if 'plot' in results:
+        try:
+            fig_dict = json.loads(results['plot'])
+            chart_traces = fig_dict.get('data', [])
+            if len(chart_traces) > 1:
+                has_categories = True
+                # Extract category names from trace names if not already available
+                if not categories_list:
+                    categories_list = [trace.get('name', f'Series {i+1}') for i, trace in enumerate(chart_traces) if trace.get('name')]
+        except:
+            pass
+    
+    if has_categories and categories_list:
+        st.markdown("#### 🏷️ Category Filters")
         
-        categories_list = results.get('categories_list', [])
+        col_filter1, col_filter2, col_filter3 = st.columns([4, 1, 1])
         
-        col_filter1, col_filter2 = st.columns([3, 1])
         with col_filter1:
             selected_categories = st.multiselect(
                 "Select categories to display:",
                 options=categories_list,
                 default=categories_list,
-                help="Choose which categories to show in the chart."
+                help="Choose which categories to show in the chart.",
+                key="category_filter"
             )
         
         with col_filter2:
-            if st.button("Select All", use_container_width=True):
-                selected_categories = categories_list
+            if st.button("✅ All", use_container_width=True, help="Select all categories"):
+                st.session_state.category_filter = categories_list
                 st.rerun()
-            
-            if st.button("Clear All", use_container_width=True):
-                selected_categories = []
+        
+        with col_filter3:
+            if st.button("❌ None", use_container_width=True, help="Clear all selections"):
+                st.session_state.category_filter = []
                 st.rerun()
+        
+        # Show selected count
+        if selected_categories:
+            st.info(f"📊 Showing {len(selected_categories)} of {len(categories_list)} categories")
+        else:
+            st.warning("⚠️ No categories selected - chart will be empty")
     
     return selected_categories
 
 def _render_chart_options(results):
     """Render chart option controls"""
-    st.markdown("""
-    <div class="decomposition-container">
-        <h4 style="margin-top: 0; color: #e65100;">📊 Chart Options & Analysis Tools</h4>
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown("#### 📊 Chart Options")
     
     col1, col2, col3 = st.columns(3)
     
     with col1:
-        show_decomposition = st.checkbox("📈 Show Decomposition Charts", value=False)
         show_trend_overlay = st.checkbox("📉 Show Trend Line", value=False)
     
     with col2:
         show_seasonal_overlay = st.checkbox("🌊 Show Seasonal Pattern", value=False)
         
-        # Only show forecast option if forecast data exists (but don't show forecast here)
-        has_forecast = results.get('overall_forecast') or results.get('category_forecasts')
-        if has_forecast:
-            st.markdown("*🔮 Forecast: Available in Forecast tab*")
-        else:
-            st.markdown("*🔮 Forecast: Not available*")
+        # Chart styling options
+        chart_height = st.selectbox(
+            "Chart Height",
+            options=[400, 500, 600, 700, 800],
+            index=2,
+            help="Select the height of the chart in pixels"
+        )
     
     with col3:
-        # Additional options can go here
-        pass
+        # Info about forecasting
+        st.info("🔮 **Want forecasting?**\nGo to the **Forecast** tab to generate predictions!")
     
     return {
-        'show_decomposition': show_decomposition,
         'show_trend_overlay': show_trend_overlay,
-        'show_seasonal_overlay': show_seasonal_overlay
+        'show_seasonal_overlay': show_seasonal_overlay,
+        'chart_height': chart_height
     }
 
 def _create_enhanced_chart(results, selected_categories, chart_options):
-    """Create enhanced chart with overlays"""
+    """Create enhanced chart with overlays and category filtering"""
     fig_dict = json.loads(results['plot'])
     fig = go.Figure(fig_dict)
     
-    # Apply category filter
-    if results.get('has_categories', False) and selected_categories:
+    # Apply category filter if categories are selected
+    if selected_categories:
         filtered_data = []
         for trace in fig.data:
-            if hasattr(trace, 'name') and trace.name in selected_categories:
-                filtered_data.append(trace)
-            elif not hasattr(trace, 'name'):
+            trace_name = getattr(trace, 'name', None)
+            # Keep trace if it's in selected categories or if it has no name (might be a single series)
+            if trace_name is None or trace_name in selected_categories:
                 filtered_data.append(trace)
         fig.data = filtered_data
     
-    # Add overlays
+    # Add overlays if requested
     if chart_options.get('show_trend_overlay'):
         _add_trend_overlay(fig, results, selected_categories)
     
@@ -209,95 +160,113 @@ def _create_enhanced_chart(results, selected_categories, chart_options):
         font=dict(color='#2E4057', size=12),
         title_font_size=18,
         title_font_color='#2E4057',
-        xaxis=dict(gridcolor='rgba(128,128,128,0.2)', title_font_color='#495057'),
-        yaxis=dict(gridcolor='rgba(128,128,128,0.2)', title_font_color='#495057'),
-        legend=dict(bgcolor='rgba(255,255,255,0.9)', bordercolor='rgba(128,128,128,0.5)'),
-        height=600,
-        hovermode='x unified'
+        xaxis=dict(
+            gridcolor='rgba(128,128,128,0.2)', 
+            title_font_color='#495057',
+            showgrid=True,
+            zeroline=False
+        ),
+        yaxis=dict(
+            gridcolor='rgba(128,128,128,0.2)', 
+            title_font_color='#495057',
+            showgrid=True,
+            zeroline=False
+        ),
+        legend=dict(
+            bgcolor='rgba(255,255,255,0.9)', 
+            bordercolor='rgba(128,128,128,0.5)',
+            borderwidth=1
+        ),
+        height=chart_options.get('chart_height', 600),
+        hovermode='x unified',
+        margin=dict(l=50, r=50, t=50, b=50)
     )
     
     return fig
 
 def _add_trend_overlay(fig, results, selected_categories):
-    """Add trend overlay to chart"""
-    decomp_data = results.get('overall_decomposition') or results.get('category_decompositions', {})
+    """Add trend overlay to chart - handles both single-series and multi-category"""
+    analysis_type = results.get('analysis_type', 'single-series')
     
-    if results.get('overall_decomposition'):
-        fig.add_trace(go.Scatter(
-            x=pd.to_datetime(decomp_data['dates']),
-            y=decomp_data['trend'],
-            mode='lines',
-            name='Trend',
-            line=dict(color='rgba(128,128,128,0.8)', width=2, dash='dash'),
-            hovertemplate='Trend: %{y:.2f}<extra></extra>'
-        ))
+    if analysis_type == 'single-series':
+        # Single series - use overall decomposition
+        decomp_data = results.get('overall_decomposition')
+        if decomp_data:
+            fig.add_trace(go.Scatter(
+                x=pd.to_datetime(decomp_data['dates']),
+                y=decomp_data['trend'],
+                mode='lines',
+                name='📉 Overall Trend',
+                line=dict(color='rgba(255,99,71,0.8)', width=3, dash='dash'),
+                hovertemplate='<b>Overall Trend</b><br>Date: %{x}<br>Value: %{y:.2f}<extra></extra>'
+            ))
+    
+    elif analysis_type == 'multi-category':
+        # Multi-category - use category decompositions
+        category_decompositions = results.get('category_decompositions', {})
+        colors = ['rgba(255,99,71,0.8)', 'rgba(54,162,235,0.8)', 'rgba(255,206,86,0.8)', 
+                 'rgba(75,192,192,0.8)', 'rgba(153,102,255,0.8)', 'rgba(255,159,64,0.8)']
+        
+        for i, (category, decomp_data) in enumerate(category_decompositions.items()):
+            # Only show trend for selected categories
+            if not selected_categories or category in selected_categories:
+                color = colors[i % len(colors)]
+                fig.add_trace(go.Scatter(
+                    x=pd.to_datetime(decomp_data['dates']),
+                    y=decomp_data['trend'],
+                    mode='lines',
+                    name=f'📉 {category} Trend',
+                    line=dict(color=color, width=2, dash='dash'),
+                    hovertemplate=f'<b>{category} Trend</b><br>Date: %{{x}}<br>Value: %{{y:.2f}}<extra></extra>'
+                ))
 
 def _add_seasonal_overlay(fig, results, selected_categories):
-    """Add seasonal overlay to chart"""
-    decomp_data = results.get('overall_decomposition') or results.get('category_decompositions', {})
+    """Add seasonal overlay to chart - handles both single-series and multi-category"""
+    analysis_type = results.get('analysis_type', 'single-series')
     
-    if results.get('overall_decomposition'):
-        seasonal_offset = np.array(decomp_data['seasonal']) + np.mean(decomp_data['original'])
-        fig.add_trace(go.Scatter(
-            x=pd.to_datetime(decomp_data['dates']),
-            y=seasonal_offset,
-            mode='lines',
-            name='Seasonal Pattern',
-            line=dict(color='rgba(169,169,169,0.7)', width=1, dash='dot'),
-            hovertemplate='Seasonal: %{y:.2f}<extra></extra>'
-        ))
-
-def _render_decomposition_charts(results, selected_categories):
-    """Render decomposition charts"""
-    st.subheader("🔍 Time Series Decomposition")
+    if analysis_type == 'single-series':
+        # Single series - use overall decomposition
+        decomp_data = results.get('overall_decomposition')
+        if decomp_data:
+            # Offset seasonal component to make it visible
+            trend_mean = np.mean(decomp_data['trend']) if decomp_data.get('trend') else 0
+            seasonal_offset = np.array(decomp_data['seasonal']) + trend_mean
+            
+            fig.add_trace(go.Scatter(
+                x=pd.to_datetime(decomp_data['dates']),
+                y=seasonal_offset,
+                mode='lines',
+                name='🌊 Overall Seasonal',
+                line=dict(color='rgba(50,205,50,0.7)', width=2, dash='dot'),
+                hovertemplate='<b>Overall Seasonal Pattern</b><br>Date: %{x}<br>Value: %{y:.2f}<extra></extra>'
+            ))
     
-    decomp_data = results.get('overall_decomposition')
-    
-    if decomp_data:
-        dates = pd.to_datetime(decomp_data['dates'])
+    elif analysis_type == 'multi-category':
+        # Multi-category - use category decompositions
+        category_decompositions = results.get('category_decompositions', {})
+        colors = ['rgba(50,205,50,0.7)', 'rgba(30,144,255,0.7)', 'rgba(255,215,0,0.7)', 
+                 'rgba(255,20,147,0.7)', 'rgba(138,43,226,0.7)', 'rgba(255,140,0,0.7)']
         
-        from plotly.subplots import make_subplots
-        
-        fig_decomp = make_subplots(
-            rows=3, cols=1,
-            subplot_titles=('📈 Original Data', '📉 Trend Component', '🌊 Seasonal Component'),
-            vertical_spacing=0.08,
-            row_heights=[0.4, 0.3, 0.3]
-        )
-        
-        # Add traces
-        fig_decomp.add_trace(
-            go.Scatter(x=dates, y=decomp_data['original'], 
-                     name='Original', line=dict(color='#3B82F6', width=2)),
-            row=1, col=1
-        )
-        
-        fig_decomp.add_trace(
-            go.Scatter(x=dates, y=decomp_data['trend'], 
-                     name='Trend', line=dict(color='#EF4444', width=2)),
-            row=2, col=1
-        )
-        
-        fig_decomp.add_trace(
-            go.Scatter(x=dates, y=decomp_data['seasonal'], 
-                     name='Seasonal', line=dict(color='#10B981', width=2)),
-            row=3, col=1
-        )
-        
-        fig_decomp.update_layout(
-            height=650,
-            showlegend=False,
-            plot_bgcolor='rgba(0,0,0,0)',
-            paper_bgcolor='rgba(0,0,0,0)',
-            font=dict(color='#2E4057')
-        )
-        
-        st.plotly_chart(fig_decomp, use_container_width=True)
+        for i, (category, decomp_data) in enumerate(category_decompositions.items()):
+            # Only show seasonal for selected categories
+            if not selected_categories or category in selected_categories:
+                if decomp_data.get('trend') and decomp_data.get('seasonal'):
+                    # Offset seasonal component to make it visible
+                    trend_mean = np.mean(decomp_data['trend'])
+                    seasonal_offset = np.array(decomp_data['seasonal']) + trend_mean
+                    
+                    color = colors[i % len(colors)]
+                    fig.add_trace(go.Scatter(
+                        x=pd.to_datetime(decomp_data['dates']),
+                        y=seasonal_offset,
+                        mode='lines',
+                        name=f'🌊 {category} Seasonal',
+                        line=dict(color=color, width=2, dash='dot'),
+                        hovertemplate=f'<b>{category} Seasonal</b><br>Date: %{{x}}<br>Value: %{{y:.2f}}<extra></extra>'
+                    ))
 
 def _render_other_visualization(results):
     """Render visualization for non-time series modules"""
-    st.subheader("📈 Visualization")
-    
     if 'plot' in results:
         fig_dict = json.loads(results['plot'])
         fig = go.Figure(fig_dict)
@@ -306,243 +275,357 @@ def _render_other_visualization(results):
             plot_bgcolor='rgba(0,0,0,0)',
             paper_bgcolor='rgba(0,0,0,0)',
             font=dict(color='#2E4057', size=12),
-            height=500
+            height=500,
+            margin=dict(l=50, r=50, t=50, b=50)
         )
         
         st.plotly_chart(fig, use_container_width=True)
 
 def _render_key_statistics(results):
     """Render key statistics section"""
-    st.markdown("""
-    <div class="metric-card">
-        <h3 style="color: #2E4057; margin-top: 0;">📊 Key Statistics</h3>
-    </div>
-    """, unsafe_allow_html=True)
+    st.subheader("📊 Key Statistics")
     
-    if results['module'] == 'time_series':
+    if 'time_series' in results['module']:
         _render_time_series_stats(results)
     elif results['module'] == 'customer':
         _render_customer_stats(results)
 
 def _render_time_series_stats(results):
-    """Render time series statistics"""
-    stats = results['statistics']
+    """Render time series statistics - handles both single-series and multi-category"""
+    analysis_type = results.get('analysis_type', 'single-series')
     
-    col1_1, col1_2 = st.columns(2)
-    
-    with col1_1:
-        st.metric("📈 Average Value", f"{stats['mean']:.2f}")
-        st.metric("📏 Range", f"{stats['max'] - stats['min']:.2f}")
-    
-    with col1_2:
-        st.metric("📊 Std Deviation", f"{stats['std']:.2f}")
-        
-        trend_value = stats.get('trend_slope', 0)
-        trend_direction = stats['trend'].title()
-        trend_color = "🔺" if trend_value > 0 else "🔻" if trend_value < 0 else "➡️"
-        
-        st.metric(
-            f"{trend_color} Trend", 
-            f"{trend_direction}",
-            delta=f"{trend_value:+.4f}/day"
-        )
+    if analysis_type == 'single-series':
+        _render_single_series_stats(results)
+    elif analysis_type == 'multi-category':
+        _render_multi_category_stats(results)
 
-def _render_customer_stats(results):
-    """Render customer analytics statistics"""
-    segments = results['segments']
-    segment_colors = {
-        'Champions': '#28a745',
-        'Loyal Customers': '#17a2b8',
-        'Potential Loyalists': '#6f42c1',
-        'New Customers': '#20c997',
-        'At Risk': '#dc3545',
-        'Others': '#6c757d'
-    }
+def _render_single_series_stats(results):
+    """Render single series statistics as cards"""
+    stats = results.get('statistics', {})
     
-    st.write("**👥 Customer Segments:**")
-    for segment, count in segments.items():
-        color = segment_colors.get(segment, '#6c757d')
-        total_customers = sum(segments.values())
-        percentage = (count / total_customers * 100) if total_customers > 0 else 0
-        
+    # Create elegant cards for single series
+    st.markdown("#### 📊 Statistical Summary")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        mean_val = stats.get('mean', 0)
         st.markdown(f"""
-        <div style="background: linear-gradient(135deg, {color}15 0%, {color}25 100%); 
-                    border-left: 4px solid {color}; padding: 8px; margin: 4px 0; border-radius: 5px;">
-            <strong style="color: {color};">{segment}:</strong> {count} customers ({percentage:.1f}%)
+        <div style="background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%); 
+                    border-left: 4px solid #2196f3; padding: 15px; margin: 8px 0; border-radius: 8px;">
+            <div style="font-size: 14px; color: #1976d2; font-weight: bold;">📈 Average Value</div>
+            <div style="font-size: 24px; font-weight: bold; color: #0d47a1;">{mean_val:.2f}</div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        range_val = stats.get('max', 0) - stats.get('min', 0)
+        st.markdown(f"""
+        <div style="background: linear-gradient(135deg, #f3e5f5 0%, #e1bee7 100%); 
+                    border-left: 4px solid #9c27b0; padding: 15px; margin: 8px 0; border-radius: 8px;">
+            <div style="font-size: 14px; color: #7b1fa2; font-weight: bold;">📏 Range</div>
+            <div style="font-size: 24px; font-weight: bold; color: #4a148c;">{range_val:.2f}</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col2:
+        std_val = stats.get('std', 0)
+        st.markdown(f"""
+        <div style="background: linear-gradient(135deg, #e8f5e8 0%, #c8e6c9 100%); 
+                    border-left: 4px solid #4caf50; padding: 15px; margin: 8px 0; border-radius: 8px;">
+            <div style="font-size: 14px; color: #388e3c; font-weight: bold;">📊 Std Deviation</div>
+            <div style="font-size: 24px; font-weight: bold; color: #1b5e20;">{std_val:.2f}</div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        data_points = stats.get('data_points', 0)
+        st.markdown(f"""
+        <div style="background: linear-gradient(135deg, #fff3e0 0%, #ffe0b2 100%); 
+                    border-left: 4px solid #ff9800; padding: 15px; margin: 8px 0; border-radius: 8px;">
+            <div style="font-size: 14px; color: #f57c00; font-weight: bold;">📊 Data Points</div>
+            <div style="font-size: 24px; font-weight: bold; color: #e65100;">{data_points}</div>
         </div>
         """, unsafe_allow_html=True)
 
-def _render_advanced_analysis(results):
-    """Render advanced analysis section"""
-    st.markdown("""
-    <div class="metric-card">
-        <h3 style="color: #2E4057; margin-top: 0;">🔍 Advanced Analysis</h3>
-    </div>
-    """, unsafe_allow_html=True)
+def _render_multi_category_stats(results):
+    """Render multi-category statistics as comparison table"""
+    # Get category statistics from ['statistics']['categories']
+    statistics = results.get('statistics', {})
+    category_stats = statistics.get('categories', {})
     
-    if results['module'] == 'time_series':
-        _render_time_series_advanced(results)
+    if not category_stats:
+        st.info("📊 Category statistics not available")
+        return
+    
+    st.markdown("#### 📊 Category Comparison")
+    
+    # Create comparison DataFrame
+    comparison_data = []
+    for category, stats in category_stats.items():
+        comparison_data.append({
+            'Category': category,
+            'Mean': f"{stats.get('mean', 0):.2f}",
+            'Std Dev': f"{stats.get('std', 0):.2f}",
+            'Range': f"{(stats.get('max', 0) - stats.get('min', 0)):.2f}",
+            'Data Points': stats.get('data_points', 0)
+        })
+    
+    if comparison_data:
+        df_comparison = pd.DataFrame(comparison_data)
+        
+        # Style the table
+        st.markdown("""
+        <style>
+        .comparison-table {
+            background: linear-gradient(135deg, #fafafa 0%, #f5f5f5 100%);
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        </style>
+        """, unsafe_allow_html=True)
+        
+        with st.container():
+            st.markdown('<div class="comparison-table">', unsafe_allow_html=True)
+            
+            # Create elegant table display
+            for i, row in df_comparison.iterrows():
+                colors = ['#2196f3', '#4caf50', '#ff9800', '#9c27b0', '#f44336', '#00bcd4']
+                color = colors[i % len(colors)]
+                
+                cols = st.columns([2, 1, 1, 1, 1])
+                
+                with cols[0]:
+                    st.markdown(f"""
+                    <div style="background: linear-gradient(135deg, {color}15 0%, {color}25 100%); 
+                                border-left: 4px solid {color}; padding: 10px; border-radius: 5px; margin: 2px 0;">
+                        <strong style="color: {color};">{row['Category']}</strong>
+                    </div>
+                    """, unsafe_allow_html=True)
+                
+                with cols[1]:
+                    st.markdown(f"**{row['Mean']}**<br><small>Mean</small>", unsafe_allow_html=True)
+                
+                with cols[2]:
+                    st.markdown(f"**{row['Std Dev']}**<br><small>Std Dev</small>", unsafe_allow_html=True)
+                
+                with cols[3]:
+                    st.markdown(f"**{row['Range']}**<br><small>Range</small>", unsafe_allow_html=True)
+                
+                with cols[4]:
+                    st.markdown(f"**{row['Data Points']}**<br><small>Points</small>", unsafe_allow_html=True)
+            
+            st.markdown('</div>', unsafe_allow_html=True)
+
+def _render_customer_stats(results):
+    """Render customer analytics statistics"""
+    segments = results.get('segments', {})
+    
+    st.write("**👥 Customer Segments:**")
+    for segment, count in segments.items():
+        total_customers = sum(segments.values())
+        percentage = (count / total_customers * 100) if total_customers > 0 else 0
+        st.write(f"• **{segment}:** {count} customers ({percentage:.1f}%)")
+
+def _render_trend_seasonality_analysis(results):
+    """Render trend and seasonality analysis"""
+    st.subheader("📈 Trend & Seasonality")
+    
+    if 'time_series' in results['module']:
+        _render_time_series_trend_seasonality(results)
     elif results['module'] == 'customer':
-        _render_customer_advanced(results)
+        _render_customer_trend_analysis(results)
 
-def _render_time_series_advanced(results):
-    """Render advanced time series analysis"""
-    stats = results['statistics']
+def _render_time_series_trend_seasonality(results):
+    """Render time series trend and seasonality analysis - handles both single-series and multi-category"""
+    analysis_type = results.get('analysis_type', 'single-series')
     
-    # Predictability analysis
-    predictability = stats.get('predictability', 'Unknown')
-    cv = stats.get('coefficient_variation', 0)
+    if analysis_type == 'single-series':
+        _render_single_series_trend_seasonality(results)
+    elif analysis_type == 'multi-category':
+        _render_multi_category_trend_seasonality(results)
+
+def _render_single_series_trend_seasonality(results):
+    """Render single series trend and seasonality analysis"""
+    stats = results.get('statistics', {})
     
-    pred_colors = {
-        'Very High': "#4caf50", 'High': "#8bc34a", 
-        'Moderate': "#ff9800", 'Low': "#ff5722"
-    }
-    pred_color = next((color for level, color in pred_colors.items() if level in predictability), "#9e9e9e")
-    pred_icon = "🎯" if 'High' in predictability else "🎲" if 'Moderate' in predictability else "⚡"
+    # Trend Analysis
+    st.markdown("#### 📈 Trend Analysis")
+    trend_value = stats.get('trend_slope', 0)
+    trend_direction = stats.get('trend', 'stable').title()
+    
+    if trend_value > 0:
+        trend_color = "#4caf50"
+        trend_icon = "🔺"
+        trend_desc = "Increasing trend detected"
+    elif trend_value < 0:
+        trend_color = "#f44336"
+        trend_icon = "🔻"
+        trend_desc = "Decreasing trend detected"
+    else:
+        trend_color = "#ff9800"
+        trend_icon = "➡️"
+        trend_desc = "Stable, no clear trend"
     
     st.markdown(f"""
-    <div style="background: linear-gradient(135deg, {pred_color}15 0%, {pred_color}25 100%); 
-                border: 2px solid {pred_color}; padding: 12px; margin: 8px 0; border-radius: 8px;">
-        <strong>{pred_icon} Predictability:</strong> {predictability}<br>
-        <small>CV: {cv:.3f}</small>
+    <div style="background: linear-gradient(135deg, {trend_color}15 0%, {trend_color}25 100%); 
+                border: 2px solid {trend_color}; padding: 15px; margin: 10px 0; border-radius: 10px;">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+            <div>
+                <div style="font-size: 18px; font-weight: bold; color: {trend_color};">
+                    {trend_icon} {trend_direction} Trend
+                </div>
+                <div style="font-size: 12px; color: #666; margin-top: 5px;">{trend_desc}</div>
+                <div style="font-size: 11px; color: #888; margin-top: 3px;">Slope: {trend_value:+.4f} units/day</div>
+            </div>
+        </div>
     </div>
     """, unsafe_allow_html=True)
     
-    # Seasonality and volatility
+    # Seasonality Analysis
+    st.markdown("#### 🌊 Seasonality Analysis")
     seasonality_strength = results.get('seasonality_strength', 0)
-    volatility = results.get('volatility', 0)
     
-    seasonality_level = "High" if seasonality_strength > 0.3 else "Moderate" if seasonality_strength > 0.15 else "Low"
-    seasonality_icon = "🔥" if seasonality_strength > 0.3 else "🔶" if seasonality_strength > 0.15 else "🔵"
+    if seasonality_strength > 0.3:
+        seasonality_level = "High"
+        seasonality_color = "#ff5722"
+        seasonality_icon = "🔥"
+        seasonality_desc = "Strong seasonal patterns detected"
+    elif seasonality_strength > 0.15:
+        seasonality_level = "Moderate"
+        seasonality_color = "#ff9800"
+        seasonality_icon = "🔶"
+        seasonality_desc = "Moderate seasonal patterns"
+    else:
+        seasonality_level = "Low"
+        seasonality_color = "#2196f3"
+        seasonality_icon = "🔵"
+        seasonality_desc = "Weak or no seasonal patterns"
     
     st.markdown(f"""
-    <div style="background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%); 
-                border: 2px solid #2196f3; padding: 12px; margin: 8px 0; border-radius: 8px;">
-        <strong>{seasonality_icon} Seasonality:</strong> {seasonality_level}<br>
-        <small>Strength: {seasonality_strength:.3f}</small>
+    <div style="background: linear-gradient(135deg, {seasonality_color}15 0%, {seasonality_color}25 100%); 
+                border: 2px solid {seasonality_color}; padding: 15px; margin: 10px 0; border-radius: 10px;">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+            <div>
+                <div style="font-size: 18px; font-weight: bold; color: {seasonality_color};">
+                    {seasonality_icon} {seasonality_level} Seasonality
+                </div>
+                <div style="font-size: 12px; color: #666; margin-top: 5px;">{seasonality_desc}</div>
+                <div style="font-size: 11px; color: #888; margin-top: 3px;">Strength: {seasonality_strength:.3f}</div>
+            </div>
+        </div>
     </div>
     """, unsafe_allow_html=True)
 
-def _render_customer_advanced(results):
-    """Render advanced customer analytics"""
-    rfm = results['rfm_summary']
+def _render_multi_category_trend_seasonality(results):
+    """Render multi-category trend and seasonality analysis"""
+    # Get category statistics from ['statistics']['categories']
+    statistics = results.get('statistics', {})
+    category_stats = statistics.get('categories', {})
+    category_seasonality = results.get('category_seasonality', {})
     
-    # RFM metrics with color coding
-    recency_color = "#4caf50" if rfm['avg_recency'] < 30 else "#ff9800" if rfm['avg_recency'] < 90 else "#f44336"
+    if not category_stats:
+        st.info("📈 Category trend/seasonality data not available")
+        return
+    
+    st.markdown("#### 📈 Category Trend Comparison")
+    
+    colors = ['#2196f3', '#4caf50', '#ff9800', '#9c27b0', '#f44336', '#00bcd4']
+    
+    # Trend comparison
+    for i, (category, stats) in enumerate(category_stats.items()):
+        trend_value = stats.get('trend_slope', 0)
+        trend_direction = stats.get('trend', 'stable').title()
+        
+        if trend_value > 0:
+            trend_icon = "🔺"
+        elif trend_value < 0:
+            trend_icon = "🔻"
+        else:
+            trend_icon = "➡️"
+        
+        color = colors[i % len(colors)]
+        
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.markdown(f"""
+            <div style="background: linear-gradient(135deg, {color}15 0%, {color}25 100%); 
+                        border-left: 4px solid {color}; padding: 12px; margin: 5px 0; border-radius: 8px;">
+                <div style="font-weight: bold; color: {color}; font-size: 16px;">
+                    {trend_icon} {category}
+                </div>
+                <div style="font-size: 12px; color: #666; margin-top: 3px;">
+                    {trend_direction} trend (slope: {trend_value:+.4f})
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+    
+    # Seasonality comparison - if available
+    if category_seasonality:
+        st.markdown("#### 🌊 Category Seasonality Comparison")
+        
+        for i, (category, seasonality_strength) in enumerate(category_seasonality.items()):
+            if seasonality_strength > 0.3:
+                seasonality_level = "High"
+                seasonality_icon = "🔥"
+            elif seasonality_strength > 0.15:
+                seasonality_level = "Moderate"
+                seasonality_icon = "🔶"
+            else:
+                seasonality_level = "Low"
+                seasonality_icon = "🔵"
+            
+            color = colors[i % len(colors)]
+            
+            st.markdown(f"""
+            <div style="background: linear-gradient(135deg, {color}15 0%, {color}25 100%); 
+                        border-left: 4px solid {color}; padding: 12px; margin: 5px 0; border-radius: 8px;">
+                <div style="font-weight: bold; color: {color}; font-size: 16px;">
+                    {seasonality_icon} {category}
+                </div>
+                <div style="font-size: 12px; color: #666; margin-top: 3px;">
+                    {seasonality_level} seasonality (strength: {seasonality_strength:.3f})
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+    else:
+        # If no category_seasonality data, show message
+        st.markdown("#### 🌊 Category Seasonality")
+        st.info("🌊 Category-specific seasonality data not available in current analysis results")
+
+def _render_customer_trend_analysis(results):
+    """Render customer analytics trend analysis"""
+    rfm = results.get('rfm_summary', {})
+    
+    # RFM Analysis
+    st.markdown("#### 💼 RFM Analysis")
+    
+    avg_recency = rfm.get('avg_recency', 0)
+    recency_color = "#4caf50" if avg_recency < 30 else "#ff9800" if avg_recency < 90 else "#f44336"
     
     st.markdown(f"""
     <div style="background: linear-gradient(135deg, {recency_color}15 0%, {recency_color}25 100%); 
                 border: 2px solid {recency_color}; padding: 12px; margin: 8px 0; border-radius: 8px;">
-        <strong>📅 Avg Recency:</strong> {rfm['avg_recency']:.1f} days
+        <strong>📅 Average Recency:</strong> {avg_recency:.1f} days<br>
+        <small>How recently customers made purchases</small>
     </div>
     """, unsafe_allow_html=True)
     
-    frequency_color = "#4caf50" if rfm['avg_frequency'] > 5 else "#ff9800" if rfm['avg_frequency'] > 2 else "#f44336"
+    avg_frequency = rfm.get('avg_frequency', 0)
+    frequency_color = "#4caf50" if avg_frequency > 5 else "#ff9800" if avg_frequency > 2 else "#f44336"
     
     st.markdown(f"""
     <div style="background: linear-gradient(135deg, {frequency_color}15 0%, {frequency_color}25 100%); 
                 border: 2px solid {frequency_color}; padding: 12px; margin: 8px 0; border-radius: 8px;">
-        <strong>🔄 Avg Frequency:</strong> {rfm['avg_frequency']:.1f} transactions
+        <strong>🔄 Average Frequency:</strong> {avg_frequency:.1f} purchases<br>
+        <small>Average transactions per customer</small>
     </div>
     """, unsafe_allow_html=True)
-
-def _render_model_comparison_results():
-    """Render model comparison results if available"""
-    st.subheader("🏆 Model Comparison Results")
     
-    comparison_data = st.session_state.model_comparison
-    comparison_table = comparison_data['comparison_table']
-    successful_models = [m for m in comparison_table if m['status'] == 'success']
-    
-    if successful_models:
-        # Create performance comparison chart
-        df_comp = pd.DataFrame(successful_models)
-        
-        col_chart1, col_chart2 = st.columns(2)
-        
-        with col_chart1:
-            # MAE Comparison
-            fig_mae = px.bar(
-                df_comp, 
-                x='model', 
-                y='mae',
-                title='MAE Comparison (Lower is Better)',
-                color='mae',
-                color_continuous_scale='RdYlGn_r'
-            )
-            fig_mae.update_layout(
-                xaxis_tickangle=45,
-                height=400,
-                plot_bgcolor='rgba(0,0,0,0)',
-                paper_bgcolor='rgba(0,0,0,0)',
-                font=dict(color='#2E4057')
-            )
-            st.plotly_chart(fig_mae, use_container_width=True)
-        
-        with col_chart2:
-            # R² Comparison (if available)
-            models_with_r2 = df_comp[df_comp['r2'].notna()]
-            if not models_with_r2.empty:
-                fig_r2 = px.bar(
-                    models_with_r2, 
-                    x='model', 
-                    y='r2',
-                    title='R² Comparison (Higher is Better)',
-                    color='r2',
-                    color_continuous_scale='RdYlGn'
-                )
-                fig_r2.update_layout(
-                    xaxis_tickangle=45,
-                    height=400,
-                    plot_bgcolor='rgba(0,0,0,0)',
-                    paper_bgcolor='rgba(0,0,0,0)',
-                    font=dict(color='#2E4057')
-                )
-                st.plotly_chart(fig_r2, use_container_width=True)
-            else:
-                st.info("R² comparison not available for these models")
-        
-        # Best model summary
-        best_model = comparison_data['best_model']
-        st.markdown(f"""
-        <div class="success-box">
-            🏆 <strong>Champion Model:</strong> {best_model['model_name']}<br>
-            📈 <strong>Performance:</strong> MAE {best_model['mae']:.3f}, RMSE {best_model['rmse']:.3f}
-            {f", R² {best_model['r2']:.3f}" if best_model.get('r2') is not None else ""}
-        </div>
-        """, unsafe_allow_html=True)
-        
-        # Clear comparison results button
-        if st.button("🗑️ Clear Comparison Results", type="secondary"):
-            if hasattr(st.session_state, 'model_comparison'):
-                delattr(st.session_state, 'model_comparison')
-            st.rerun()
-
-def _render_export_section():
-    """Render export and actions section"""
-    st.markdown("---")
-    st.subheader("📥 Export & Actions")
-    
-    col_export1, col_export2, col_export3 = st.columns(3)
-    
-    with col_export1:
-        if st.button("📄 Generate PDF Report", use_container_width=True):
-            st.markdown("""
-            <div class="warning-box">
-                🚧 PDF export feature coming soon!
-            </div>
-            """, unsafe_allow_html=True)
-    
-    with col_export2:
-        if st.button("📊 Export to Excel", use_container_width=True):
-            st.markdown("""
-            <div class="warning-box">
-                🚧 Excel export feature coming soon!
-            </div>
-            """, unsafe_allow_html=True)
-    
-    with col_export3:
-        if st.button("🔄 Run New Analysis", use_container_width=True):
-            clear_session()
-            st.success("🔄 Session cleared! You can now load new data.")
-            st.rerun()
+    avg_monetary = rfm.get('avg_monetary', 0)
+    st.markdown(f"""
+    <div style="background: linear-gradient(135deg, #4caf5015 0%, #4caf5025 100%); 
+                border: 2px solid #4caf50; padding: 12px; margin: 8px 0; border-radius: 8px;">
+        <strong>💰 Average Monetary Value:</strong> ${avg_monetary:.2f}<br>
+        <small>Average spending per customer</small>
+    </div>
+    """, unsafe_allow_html=True)
