@@ -700,7 +700,7 @@ class AnalysisModules:
                 overall_predictability, overall_random_walk, overall_cv = AnalysisModules.analyze_predictability(df, value_col)
                 
                 # Deep pattern analysis
-                pattern_analysis = AnalysisModules.analyze_pattern_types(df, value_col, date_col)
+                # pattern_analysis = AnalysisModules.analyze_pattern_types(df, value_col, date_col)
                 
                 overall_seasonality_insights, monthly_strength, weekly_strength = AnalysisModules.analyze_detailed_seasonality(df, date_col, value_col)
                 
@@ -726,6 +726,8 @@ class AnalysisModules:
                 predictability, random_walk_insight, cv = AnalysisModules.analyze_predictability(df, value_col)
                 seasonality_insights, monthly_strength, weekly_strength = AnalysisModules.analyze_detailed_seasonality(df, date_col, value_col)
                 
+                # pattern_analysis = AnalysisModules.analyze_pattern_types(df, value_col, date_col)
+
                 stats = {
                     "mean": float(df[value_col].mean()),
                     "std": float(df[value_col].std()),
@@ -793,8 +795,8 @@ class AnalysisModules:
             else:
                 insights.extend(seasonality_insights[:2])
             
-            insights.append(f"Pattern type: {pattern_analysis['pattern_type']} (confidence: {pattern_analysis['confidence']:.1%})")
-            insights.append(f"Volatility assessment: {pattern_analysis['volatility_type']} with {pattern_analysis['pattern_strength']:.3f} strength")
+            # insights.append(f"Pattern type: {pattern_analysis['pattern_type']} (confidence: {pattern_analysis['confidence']:.1%})")
+            # insights.append(f"Volatility assessment: {pattern_analysis['volatility_type']} with {pattern_analysis['pattern_strength']:.3f} strength")
 
             # Add enhanced seasonality insights from decomposition
             if overall_decomposition and 'seasonality_analysis' in overall_decomposition:
@@ -824,7 +826,7 @@ class AnalysisModules:
                     "annualized_growth_percent": annualized_growth,
                     "time_span_days": time_span
                 },
-                "pattern_analysis": pattern_analysis,
+                "pattern_analysis": None,
                 "decomposition": {
                     "overall": overall_decomposition,
                     "by_category": category_decompositions if category_col and category_col in df.columns else {}

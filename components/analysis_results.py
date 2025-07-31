@@ -482,37 +482,38 @@ def _render_single_series_trend_seasonality(results):
     """, unsafe_allow_html=True)
     
     # Seasonality Analysis
+    color = '#2196f3'
+
     st.markdown("#### 🌊 Seasonality Analysis")
-    seasonality_strength = results.get('seasonality_strength', 0)
+    overall = results.get('overall_decomposition', {})
+    seasonality_analysis = overall.get('seasonality_analysis', {})
+    strength = seasonality_analysis.get('strength', 0)
+    period_points = seasonality_analysis.get('period_points', 'N/A')
+    interpretation = seasonality_analysis.get('interpretation', 'No interpretation available')
     
-    if seasonality_strength > 0.3:
+    if strength > 0.3:
         seasonality_level = "High"
-        seasonality_color = "#ff5722"
         seasonality_icon = "🔥"
-        seasonality_desc = "Strong seasonal patterns detected"
-    elif seasonality_strength > 0.15:
+    elif strength > 0.15:
         seasonality_level = "Moderate"
-        seasonality_color = "#ff9800"
         seasonality_icon = "🔶"
-        seasonality_desc = "Moderate seasonal patterns"
     else:
         seasonality_level = "Low"
-        seasonality_color = "#2196f3"
         seasonality_icon = "🔵"
-        seasonality_desc = "Weak or no seasonal patterns"
+
     
     st.markdown(f"""
-    <div style="background: linear-gradient(135deg, {seasonality_color}15 0%, {seasonality_color}25 100%); 
-                border: 2px solid {seasonality_color}; padding: 15px; margin: 10px 0; border-radius: 10px;">
-        <div style="display: flex; justify-content: space-between; align-items: center;">
-            <div>
-                <div style="font-size: 18px; font-weight: bold; color: {seasonality_color};">
-                    {seasonality_icon} {seasonality_level} Seasonality
-                </div>
-                <div style="font-size: 12px; color: #666; margin-top: 5px;">{seasonality_desc}</div>
-                <div style="font-size: 11px; color: #888; margin-top: 3px;">Strength: {seasonality_strength:.3f}</div>
-            </div>
-        </div>
+    <div style="background: linear-gradient(135deg, {color}15 0%, {color}25 100%);
+    border-left: 4px solid {color}; padding: 12px; margin: 5px 0; border-radius: 8px;">
+    <div style="font-weight: bold; color: {color}; font-size: 16px;">
+    {seasonality_icon}
+    </div>
+    <div style="font-size: 12px; color: #666; margin-top: 3px;">
+    {seasonality_level} seasonality (strength: {strength:.3f}, period: {period_points} points)
+    </div>
+    <div style="font-size: 11px; color: #888; margin-top: 2px; font-style: italic;">
+    {interpretation}
+    </div>
     </div>
     """, unsafe_allow_html=True)
 

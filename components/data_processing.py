@@ -32,7 +32,7 @@ def render_data_processing_tab(module):
 def _render_current_data_info():
     """Display current data information"""
     df = st.session_state.current_data
-    
+    st.session_state.original_data = df
     # Data preview
     st.dataframe(df.head(), use_container_width=True, height=200)
     
@@ -331,15 +331,24 @@ def _render_before_after_comparison(preprocessing_params):
     with col_before:
         st.markdown("**📥 Original Data**")
         # Show original data sample
+        original_data = st.session_state.original_data
+        st.dataframe(original_data, use_container_width=True)
+
+        st.markdown(f"""
+        <div class="success-box">
+            📊 <strong>Shape:</strong> {original_data.shape[0]} rows × {original_data.shape[1]} columns<br>
+            📋 <strong>Columns:</strong> {', '.join(original_data.columns.tolist())}
+        </div>
+        """, unsafe_allow_html=True)
         
     with col_after:
         st.markdown("**📤 Processed Data**")
         aggregated_data = preprocessing_params['aggregated_data']
-        st.dataframe(aggregated_data.head(), use_container_width=True)
+        st.dataframe(aggregated_data, use_container_width=True)
         
         st.markdown(f"""
         <div class="success-box">
-            📊 <strong>New Shape:</strong> {aggregated_data.shape[0]} rows × {aggregated_data.shape[1]} columns<br>
+            📊 <strong>Shape:</strong> {aggregated_data.shape[0]} rows × {aggregated_data.shape[1]} columns<br>
             📋 <strong>Columns:</strong> {', '.join(aggregated_data.columns.tolist())}
         </div>
         """, unsafe_allow_html=True)
