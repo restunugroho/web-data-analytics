@@ -65,8 +65,8 @@ def _render_current_data_info():
 
 def _render_category_filters(columns, agg_counter):
     """Render category filters section"""
-    st.markdown("#### 🔍 Category Filters (Optional)")
-    st.markdown("Filter your data by specific categories before processing.")
+    st.markdown("#### 🔍 Advanced Filtering (Optional)")
+    st.markdown("Apply additional filters to focus your analysis on specific data segments.")
     
     # Identify categorical columns (include all non-numeric columns)
     categorical_candidates = []
@@ -80,14 +80,14 @@ def _render_category_filters(columns, agg_counter):
                 categorical_candidates.append(col)
     
     if not categorical_candidates:
-        st.info("ℹ️ No categorical columns detected for filtering.")
+        st.info("ℹ️ No categorical columns available for additional filtering.")
         return {}
     
     # Enable category filtering
     enable_filters = st.checkbox(
-        "Enable category filtering", 
+        "🎯 Enable advanced data filtering", 
         value=False,
-        help="Filter data by specific category values before processing. Useful for focusing analysis on specific segments.",
+        help="Apply additional filters to focus analysis on specific categories or segments",
         key=f"enable_filters_{agg_counter}"
     )
     
@@ -99,12 +99,12 @@ def _render_category_filters(columns, agg_counter):
     
     # Allow up to 3 category filters
     num_filters = st.number_input(
-        "Number of category filters (max 3):",
+        "Number of filters to apply:",
         min_value=1,
         max_value=3,
         value=1,
         key=f"num_filters_{agg_counter}",
-        help="Select how many category columns you want to filter by"
+        help="Select how many category columns you want to filter by (maximum 3)"
     )
     
     # Keep track of cumulative row count for progressive filtering
@@ -121,7 +121,7 @@ def _render_category_filters(columns, agg_counter):
             
             # Column selection
             filter_col = st.selectbox(
-                f"Select category column {i+1}:",
+                f"Select column for filter {i+1}:",
                 available_columns,
                 key=f"filter_col_{i}_{agg_counter}",
                 help=f"Choose the categorical column for filter {i+1}"
@@ -148,10 +148,10 @@ def _render_category_filters(columns, agg_counter):
                 
                 # Filter method selection
                 filter_method = st.radio(
-                    f"Filter method for {filter_col}:",
+                    f"How would you like to select values for {filter_col}?",
                     ["Select specific values", "Select by prefix", "Select by suffix"],
                     key=f"filter_method_{i}_{agg_counter}",
-                    help="Choose how to select values: specific values, or all values starting/ending with certain text"
+                    help="Choose how to select values: pick specific ones, or all values starting/ending with certain text"
                 )
                 
                 selected_values = []
@@ -163,15 +163,15 @@ def _render_category_filters(columns, agg_counter):
                         st.info(f"ℹ️ Showing first 100 values out of {len(unique_values)}. Use prefix/suffix for more options.")
                     
                     selected_values = st.multiselect(
-                        f"Select values for {filter_col}:",
+                        f"Choose values to include:",
                         display_values,
                         key=f"filter_values_{i}_{agg_counter}",
-                        help=f"Choose specific values from {filter_col} to include in analysis"
+                        help=f"Select specific values from {filter_col} to include in your analysis"
                     )
                 
                 elif filter_method == "Select by prefix":
                     prefix = st.text_input(
-                        f"Enter prefix for {filter_col}:",
+                        f"Enter prefix (values starting with):",
                         key=f"filter_prefix_{i}_{agg_counter}",
                         help="Enter text that values should START with (e.g., 'Product_' to select 'Product_A', 'Product_B', etc.)"
                     )
@@ -187,7 +187,7 @@ def _render_category_filters(columns, agg_counter):
                 
                 elif filter_method == "Select by suffix":
                     suffix = st.text_input(
-                        f"Enter suffix for {filter_col}:",
+                        f"Enter suffix (values ending with):",
                         key=f"filter_suffix_{i}_{agg_counter}",
                         help="Enter text that values should END with (e.g., '_2024' to select 'Sales_2024', 'Revenue_2024', etc.)"
                     )
@@ -224,7 +224,7 @@ def _render_category_filters(columns, agg_counter):
     # Show combined filter preview
     if filters:
         st.markdown("---")
-        st.markdown("**🔍 Combined Filter Preview:**")
+        st.markdown("**🔍 Combined Filter Summary:**")
         
         # For final preview, actually calculate to ensure accuracy
         filtered_df = df.copy()
@@ -270,33 +270,21 @@ def _render_preprocessing_config(module):
         st.success("✅ Data is already in processed format")
         return {'ready': True, 'aggregated_data': None}
     
-    # Category filters section (before column selection)
-    category_filters = _render_category_filters(columns, agg_counter)
-    
-    # Column selection based on module
+    # Column selection based on module (moved to top)
     if module == "time_series":
-        return _handle_time_series_preprocessing(columns, agg_counter, category_filters)
+        return _handle_time_series_preprocessing(columns, agg_counter)
     elif module == "customer":
-        return _handle_customer_preprocessing(columns, agg_counter, category_filters)
+        return _handle_customer_preprocessing(columns, agg_counter)
     
     return {'ready': False}
 
-def _handle_time_series_preprocessing(columns, agg_counter, category_filters=None):
+def _handle_time_series_preprocessing(columns, agg_counter):
     """Handle time series preprocessing configuration"""
-    # Apply category filters first if any
     df = st.session_state.current_data
-    if category_filters:
-        df = _apply_category_filters(df, category_filters)
-        if df.empty:
-            st.error("❌ Category filters resulted in empty dataset. Please adjust your filters.")
-            return {'ready': False}
-        
-        # Update columns list based on filtered data
-        columns = df.columns.tolist()
-        
-        # Show filtered data info
-        st.markdown("---")
-        st.info(f"📊 Working with filtered data: {df.shape[0]} rows × {df.shape[1]} columns")
+    
+    # Step 1: Column Mapping (Required)
+    st.markdown("#### 📊 Step 1: Column Mapping")
+    st.markdown("Map your data columns to the required fields for time series analysis.")
     
     # Detect likely datetime and value columns
     datetime_candidates = [col for col in columns if any(keyword in col.lower() 
@@ -304,33 +292,41 @@ def _handle_time_series_preprocessing(columns, agg_counter, category_filters=Non
     numeric_candidates = [col for col in columns if 
                          pd.api.types.is_numeric_dtype(df[col])]
     
-    # Column selection
-    datetime_col = st.selectbox(
-        "📅 Select Date/Time Column:", 
-        columns,
-        index=columns.index(datetime_candidates[0]) if datetime_candidates else 0,
-        key=f"datetime_col_{agg_counter}",
-        help="Select the column containing date/time values"
-    )
+    # Column selection in organized layout
+    col_map1, col_map2 = st.columns(2)
     
-    available_value_cols = [col for col in columns if col != datetime_col]
-    value_col = st.selectbox(
-        "📈 Select Value Column:", 
-        available_value_cols,
-        index=0,
-        key=f"value_col_{agg_counter}",
-        help="Select the column containing the values to analyze"
-    )
+    with col_map1:
+        datetime_col = st.selectbox(
+            "📅 Date/Time Column:", 
+            columns,
+            index=columns.index(datetime_candidates[0]) if datetime_candidates else 0,
+            key=f"datetime_col_{agg_counter}",
+            help="Select the column containing date/time values"
+        )
     
-    # Category analysis (optional)
-    st.markdown("#### 🏷️ Category Analysis (Optional)")
+    with col_map2:
+        available_value_cols = [col for col in columns if col != datetime_col]
+        value_col = st.selectbox(
+            "📈 Value Column:", 
+            available_value_cols,
+            index=0,
+            key=f"value_col_{agg_counter}",
+            help="Select the column containing the values to analyze"
+        )
+    
+    st.markdown("---")
+    
+    # Step 2: Category Analysis (Optional)
+    st.markdown("#### 🏷️ Step 2: Category Analysis (Optional)")
+    st.markdown("Group your time series by categories for multi-series analysis.")
+    
     available_category_cols = [col for col in columns if col not in [datetime_col, value_col]]
     has_category_cols = len(available_category_cols) > 0
     
     enable_category = st.checkbox(
-        "Enable multi-category analysis", 
+        "📊 Enable multi-category analysis", 
         value=False,
-        help="Analyze multiple time series by category/group",
+        help="Analyze multiple time series grouped by category/segment",
         key=f"enable_category_{agg_counter}"
     )
     
@@ -345,14 +341,26 @@ def _handle_time_series_preprocessing(columns, agg_counter, category_filters=Non
         
         if category_col:
             unique_categories = df[category_col].unique()
-            st.info(f"📋 Found {len(unique_categories)} categories: {', '.join(map(str, unique_categories[:5]))}" + 
-                   (f" and {len(unique_categories)-5} more..." if len(unique_categories) > 5 else ""))
+            with st.container():
+                st.success(f"📋 Found {len(unique_categories)} categories: {', '.join(map(str, unique_categories[:5]))}" + 
+                          (f" and {len(unique_categories)-5} more..." if len(unique_categories) > 5 else ""))
     
-    # Data aggregation settings
-    st.markdown("#### 🔄 Data Aggregation")
+    st.markdown("---")
+    
+    # Step 3: Advanced Filtering (Optional) - Now comes after column mapping
+    category_filters = _render_category_filters(columns, agg_counter)
+    
+    # Add separator if filters were applied
+    if category_filters:
+        st.markdown("---")
+    
+    # Step 4: Data Aggregation Settings
+    st.markdown("#### 🔄 Step 4: Data Aggregation Settings")
+    st.markdown("Configure how to aggregate your raw data by time periods.")
+    
     needs_agg = st.checkbox(
-        "Aggregate raw data?", 
-        help="Check if your data has multiple records per time period that need to be aggregated",
+        "🔧 Aggregate raw data", 
+        help="Check if your data has multiple records per time period that need to be combined",
         key=f"needs_agg_{agg_counter}"
     )
     
@@ -367,47 +375,70 @@ def _handle_time_series_preprocessing(columns, agg_counter, category_filters=Non
     }
     
     if needs_agg:
-        agg_method = st.selectbox(
-            "Aggregation Method:", 
-            ["sum", "mean", "count", "median"],
-            key=f"agg_method_{agg_counter}",
-            help="Choose how to aggregate multiple values in the same time period"
-        )
+        # Show current data context if filters applied
+        if category_filters:
+            filtered_df = _apply_category_filters(df, category_filters)
+            if filtered_df.empty:
+                st.error("❌ Category filters resulted in empty dataset. Please adjust your filters.")
+                return {'ready': False}
+            
+            with st.container():
+                st.info(f"📊 Aggregation will be applied to filtered data: {filtered_df.shape[0]:,} rows")
         
-        # Custom frequency with multiplier
-        col_freq_num, col_freq_unit = st.columns([1, 2])
-        
-        with col_freq_num:
-            freq_multiplier = st.number_input(
-                "Interval:",
-                min_value=1,
-                max_value=1000,
-                value=1,
-                step=1,
-                key=f"freq_multiplier_{agg_counter}",
-                help="Number of time units (e.g., 2 for '2 hours')"
-            )
-        
-        with col_freq_unit:
-            freq_unit = st.selectbox(
-                "Time Unit:", 
-                ["min", "H", "D", "W", "M", "Q"],
+        # Aggregation configuration in clean, organized sections
+        with st.container():
+            st.markdown("**⚙️ Aggregation Configuration**")
+            
+            # Method selection
+            agg_method = st.selectbox(
+                "Aggregation Method:", 
+                ["sum", "mean", "count", "median"],
+                key=f"agg_method_{agg_counter}",
+                help="Choose how to combine multiple values in the same time period",
                 format_func=lambda x: {
-                    "min": "Minute(s)", 
-                    "H": "Hour(s)",
-                    "D": "Day(s)", 
-                    "W": "Week(s)", 
-                    "M": "Month(s)", 
-                    "Q": "Quarter(s)"
-                }[x],
-                key=f"freq_unit_{agg_counter}",
-                help="Choose the time unit for aggregation"
+                    "sum": "Sum - Add all values together",
+                    "mean": "Average - Calculate mean of values", 
+                    "count": "Count - Count number of records",
+                    "median": "Median - Calculate median of values"
+                }[x]
             )
+            
+            st.markdown("**📅 Time Frequency Settings**")
+            
+            # Time frequency configuration
+            col_freq_num, col_freq_unit = st.columns([1, 2])
+            
+            with col_freq_num:
+                freq_multiplier = st.number_input(
+                    "Every:",
+                    min_value=1,
+                    max_value=1000,
+                    value=1,
+                    step=1,
+                    key=f"freq_multiplier_{agg_counter}",
+                    help="Number of time units (e.g., 2 for 'every 2 hours')"
+                )
+            
+            with col_freq_unit:
+                freq_unit = st.selectbox(
+                    "Time Unit:", 
+                    ["min", "H", "D", "W", "M", "Q"],
+                    format_func=lambda x: {
+                        "min": "Minute(s)", 
+                        "H": "Hour(s)",
+                        "D": "Day(s)", 
+                        "W": "Week(s)", 
+                        "M": "Month(s)", 
+                        "Q": "Quarter(s)"
+                    }[x],
+                    key=f"freq_unit_{agg_counter}",
+                    help="Choose the time unit for aggregation"
+                )
         
         # Combine multiplier and unit to create pandas frequency string
         freq = f"{freq_multiplier}{freq_unit}"
         
-        # Display the resulting frequency
+        # Display the resulting configuration in a highlighted summary box
         freq_display = {
             "min": "minute(s)", 
             "H": "hour(s)",
@@ -417,64 +448,91 @@ def _handle_time_series_preprocessing(columns, agg_counter, category_filters=Non
             "Q": "quarter(s)"
         }[freq_unit]
         
-        st.info(f"📅 Aggregation frequency: Every {freq_multiplier} {freq_display}")
+        with st.container():
+            st.markdown(f"""
+            <div style="background-color: #e8f4fd; padding: 15px; border-radius: 8px; border-left: 4px solid #1f77b4; margin: 10px 0;">
+                <h4 style="margin: 0 0 10px 0; color: #1f77b4;">📋 Aggregation Summary</h4>
+                <strong>Method:</strong> {agg_method.title()}<br>
+                <strong>Frequency:</strong> Every {freq_multiplier} {freq_display}<br>
+                <strong>Categories:</strong> {'Yes (' + category_col + ')' if category_col else 'No'}<br>
+                <strong>Filters:</strong> {len(category_filters) if category_filters else 0} applied
+            </div>
+            """, unsafe_allow_html=True)
         
-        # Show additional info based on frequency selection
-        if freq_unit in ["min", "H"] and freq_multiplier == 1:
-            st.info("ℹ️ High-frequency aggregation selected. Ensure your data has sufficient granularity.")
-        elif freq_unit in ["min", "H"]:
-            st.info(f"ℹ️ Custom high-frequency aggregation ({freq_multiplier} {freq_display}) selected.")
+        # Show additional helpful info based on frequency selection
+        if freq_unit in ["min", "H"] and freq_multiplier <= 5:
+            st.info("ℹ️ High-frequency aggregation selected. Ensure your data has sufficient time granularity.")
+        elif freq_unit == "M" and freq_multiplier >= 6:
+            st.info("ℹ️ Long-term aggregation selected. This will create fewer data points with broader time spans.")
         
         preprocessing_params.update({
             'agg_method': agg_method,
             'freq': freq
         })
         
-        # Aggregation button
+        # Apply aggregation button section
         st.markdown("---")
-        if st.button("🔄 Apply Aggregation", type="primary", key=f"aggregate_btn_{agg_counter}"):
-            aggregated_data = _handle_data_aggregation(preprocessing_params)
-            if aggregated_data is not None:
-                preprocessing_params['aggregated_data'] = aggregated_data
-                return preprocessing_params
+        with st.container():
+            col_btn1, col_btn2, col_btn3 = st.columns([1, 2, 1])
+            with col_btn2:
+                if st.button("🚀 Apply Preprocessing", type="primary", key=f"aggregate_btn_{agg_counter}", use_container_width=True):
+                    aggregated_data = _handle_data_aggregation(preprocessing_params)
+                    if aggregated_data is not None:
+                        preprocessing_params['aggregated_data'] = aggregated_data
+                        return preprocessing_params
     
     return preprocessing_params
 
-def _handle_customer_preprocessing(columns, agg_counter, category_filters=None):
+def _handle_customer_preprocessing(columns, agg_counter):
     """Handle customer analytics preprocessing configuration"""
-    # Apply category filters first if any
     df = st.session_state.current_data
-    if category_filters:
-        df = _apply_category_filters(df, category_filters)
-        if df.empty:
-            st.error("❌ Category filters resulted in empty dataset. Please adjust your filters.")
-            return {'ready': False}
-        
-        # Update columns list based on filtered data
-        columns = df.columns.tolist()
-        
-        # Show filtered data info
-        st.markdown("---")
-        st.info(f"📊 Working with filtered data: {df.shape[0]} rows × {df.shape[1]} columns")
     
-    customer_col = st.selectbox(
-        "👤 Select Customer ID Column:", 
-        columns,
-        key=f"customer_col_{agg_counter}",
-        help="Select the column containing customer identifiers"
-    )
-    amount_col = st.selectbox(
-        "💰 Select Amount Column:", 
-        [col for col in columns if col != customer_col],
-        key=f"amount_col_{agg_counter}",
-        help="Select the column containing transaction amounts"
-    )
-    date_col = st.selectbox(
-        "📅 Select Date Column:", 
-        [col for col in columns if col not in [customer_col, amount_col]],
-        key=f"date_col_customer_{agg_counter}",
-        help="Select the column containing transaction dates"
-    )
+    # Step 1: Column Mapping (Required)
+    st.markdown("#### 📊 Step 1: Column Mapping")
+    st.markdown("Map your data columns to the required fields for customer analytics.")
+    
+    # Organized column selection layout
+    col_map1, col_map2, col_map3 = st.columns(3)
+    
+    with col_map1:
+        customer_col = st.selectbox(
+            "👤 Customer ID Column:", 
+            columns,
+            key=f"customer_col_{agg_counter}",
+            help="Select the column containing customer identifiers"
+        )
+    
+    with col_map2:
+        amount_col = st.selectbox(
+            "💰 Amount Column:", 
+            [col for col in columns if col != customer_col],
+            key=f"amount_col_{agg_counter}",
+            help="Select the column containing transaction amounts"
+        )
+    
+    with col_map3:
+        date_col = st.selectbox(
+            "📅 Date Column:", 
+            [col for col in columns if col not in [customer_col, amount_col]],
+            key=f"date_col_customer_{agg_counter}",
+            help="Select the column containing transaction dates"
+        )
+    
+    # Column mapping summary
+    with st.container():
+        st.markdown(f"""
+        <div style="background-color: #e8f5e8; padding: 15px; border-radius: 8px; border-left: 4px solid #28a745; margin: 10px 0;">
+            <h4 style="margin: 0 0 10px 0; color: #28a745;">📋 Column Mapping Summary</h4>
+            <strong>👤 Customer ID:</strong> <code>{customer_col}</code><br>
+            <strong>💰 Amount:</strong> <code>{amount_col}</code><br>
+            <strong>📅 Date:</strong> <code>{date_col}</code>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    st.markdown("---")
+    
+    # Step 2: Advanced Filtering (Optional) - Now comes after column mapping
+    category_filters = _render_category_filters(columns, agg_counter)
     
     return {
         'customer_col': customer_col,
@@ -487,7 +545,7 @@ def _handle_customer_preprocessing(columns, agg_counter, category_filters=None):
 
 def _handle_data_aggregation(preprocessing_params):
     """Handle data aggregation and return aggregated data"""
-    with st.spinner("Aggregating data..."):
+    with st.spinner("🔄 Processing your data..."):
         # Apply category filters to current data if any
         df = st.session_state.current_data
         if preprocessing_params.get('category_filters'):
@@ -559,7 +617,7 @@ def _handle_data_aggregation(preprocessing_params):
                 filter_count = len(preprocessing_params['category_filters'])
                 filter_info = f" with {filter_count} category filter{'s' if filter_count > 1 else ''}"
             
-            st.success(f"✅ Data aggregated successfully to {freq_display_success} frequency{filter_info}!")
+            st.success(f"✅ Data processed successfully! Aggregated to {freq_display_success} frequency{filter_info}")
             return new_data
     
     return None
@@ -569,7 +627,7 @@ def _render_before_after_comparison(preprocessing_params):
     if preprocessing_params.get('aggregated_data') is None:
         return
     
-    st.subheader("📊 Before vs After Preprocessing")
+    st.subheader("📊 Preprocessing Results")
     
     col_before, col_after = st.columns(2)
     
@@ -580,11 +638,11 @@ def _render_before_after_comparison(preprocessing_params):
         st.markdown("**📥 Original Data**")
         # Show original data sample
         original_data = st.session_state.original_data
-        st.dataframe(original_data, use_container_width=True)
+        st.dataframe(original_data.head(), use_container_width=True, height=200)
 
         st.markdown(f"""
-        <div class="success-box">
-            📊 <strong>Shape:</strong> {original_data.shape[0]} rows × {original_data.shape[1]} columns<br>
+        <div style="background-color: #f8f9fa; padding: 10px; border-radius: 5px; border-left: 3px solid #6c757d;">
+            📊 <strong>Shape:</strong> {original_data.shape[0]:,} rows × {original_data.shape[1]} columns<br>
             📋 <strong>Columns:</strong> {', '.join(original_data.columns.tolist())}
         </div>
         """, unsafe_allow_html=True)
@@ -592,11 +650,11 @@ def _render_before_after_comparison(preprocessing_params):
     with col_after:
         st.markdown("**📤 Processed Data**")
         aggregated_data = preprocessing_params['aggregated_data']
-        st.dataframe(aggregated_data, use_container_width=True)
+        st.dataframe(aggregated_data.head(), use_container_width=True, height=200)
         
         st.markdown(f"""
-        <div class="success-box">
-            📊 <strong>Shape:</strong> {aggregated_data.shape[0]} rows × {aggregated_data.shape[1]} columns<br>
+        <div style="background-color: #d4edda; padding: 10px; border-radius: 5px; border-left: 3px solid #28a745;">
+            📊 <strong>Shape:</strong> {aggregated_data.shape[0]:,} rows × {aggregated_data.shape[1]} columns<br>
             📋 <strong>Columns:</strong> {', '.join(aggregated_data.columns.tolist())}
         </div>
         """, unsafe_allow_html=True)
