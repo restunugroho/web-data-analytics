@@ -4,6 +4,7 @@ import time
 import re
 from fe_utils.api_client import APIClient
 import logging
+import datetime
 
 def render_data_processing_tab(module):
     """Render the data processing tab - focused on preprocessing only"""
@@ -286,11 +287,37 @@ def _handle_time_series_preprocessing(columns, agg_counter):
     st.markdown("#### 📊 Step 1: Column Mapping")
     st.markdown("Map your data columns to the required fields for time series analysis.")
     
-    # Detect likely datetime and value columns
-    datetime_candidates = [col for col in columns if any(keyword in col.lower() 
-                          for keyword in ['date', 'time', 'day', 'month', 'year'])]
-    numeric_candidates = [col for col in columns if 
-                         pd.api.types.is_numeric_dtype(df[col])]
+    # Filter columns by data type
+    datetime_candidates = []
+    numeric_candidates = []
+    
+    for col in columns:
+        # Check for datetime or string columns (potential datetime)
+        if pd.api.types.is_datetime64_any_dtype(df[col]) or df[col].dtype == 'object':
+            # Additional check for string columns that might contain dates
+            if df[col].dtype == 'object':
+                sample_values = df[col].dropna().head(10).astype(str)
+                # Check if values look like dates
+                date_like = any(any(keyword in str(val).lower() for keyword in ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 
+                                                                               'jul', 'aug', 'sep', 'oct', 'nov', 'dec',
+                                                                               '2020', '2021', '2022', '2023', '2024', '2025',
+                                                                               '-', '/', ':']) for val in sample_values)
+                if date_like or any(keyword in col.lower() for keyword in ['date', 'time', 'day', 'month', 'year']):
+                    datetime_candidates.append(col)
+            else:
+                datetime_candidates.append(col)
+        
+        # Check for numeric columns
+        if pd.api.types.is_numeric_dtype(df[col]):
+            numeric_candidates.append(col)
+    
+    if not datetime_candidates:
+        st.error("❌ No suitable date/time columns found. Please ensure your data has datetime or string datetime columns.")
+        return {'ready': False}
+    
+    if not numeric_candidates:
+        st.error("❌ No suitable numeric columns found. Please ensure your data has numeric value columns.")
+        return {'ready': False}
     
     # Column selection in organized layout
     col_map1, col_map2 = st.columns(2)
@@ -298,20 +325,23 @@ def _handle_time_series_preprocessing(columns, agg_counter):
     with col_map1:
         datetime_col = st.selectbox(
             "📅 Date/Time Column:", 
-            columns,
-            index=columns.index(datetime_candidates[0]) if datetime_candidates else 0,
+            datetime_candidates,
             key=f"datetime_col_{agg_counter}",
-            help="Select the column containing date/time values"
+            help="Select the column containing date/time values (datetime or string format)"
         )
     
     with col_map2:
-        available_value_cols = [col for col in columns if col != datetime_col]
+        # Filter numeric columns to exclude the selected datetime column (in case it was numeric)
+        available_numeric_cols = [col for col in numeric_candidates if col != datetime_col]
+        if not available_numeric_cols:
+            st.error("❌ No numeric columns available after selecting date column.")
+            return {'ready': False}
+            
         value_col = st.selectbox(
             "📈 Value Column:", 
-            available_value_cols,
-            index=0,
+            available_numeric_cols,
             key=f"value_col_{agg_counter}",
-            help="Select the column containing the values to analyze"
+            help="Select the numeric column containing the values to analyze"
         )
     
     st.markdown("---")
@@ -354,142 +384,196 @@ def _handle_time_series_preprocessing(columns, agg_counter):
     if category_filters:
         st.markdown("---")
     
-    # Step 4: Data Aggregation Settings
-    st.markdown("#### 🔄 Step 4: Data Aggregation Settings")
+    # Step 4: Data Aggregation Settings (Required)
+    st.markdown("#### 🔄 Step 3: Data Aggregation Settings")
     st.markdown("Configure how to aggregate your raw data by time periods.")
     
-    needs_agg = st.checkbox(
-        "🔧 Aggregate raw data", 
-        help="Check if your data has multiple records per time period that need to be combined",
-        key=f"needs_agg_{agg_counter}"
-    )
+    # Show current data context if filters applied
+    if category_filters:
+        filtered_df = _apply_category_filters(df, category_filters)
+        if filtered_df.empty:
+            st.error("❌ Category filters resulted in empty dataset. Please adjust your filters.")
+            return {'ready': False}
+        
+        with st.container():
+            st.info(f"📊 Aggregation will be applied to filtered data: {filtered_df.shape[0]:,} rows")
+    
+    # Aggregation configuration in clean, organized sections
+    with st.container():
+        st.markdown("**⚙️ Aggregation Configuration**")
+        
+        # Method selection
+        agg_method = st.selectbox(
+            "Aggregation Method:", 
+            ["sum", "mean", "count", "median"],
+            key=f"agg_method_{agg_counter}",
+            help="Choose how to combine multiple values in the same time period",
+            format_func=lambda x: {
+                "sum": "Sum - Add all values together",
+                "mean": "Average - Calculate mean of values", 
+                "count": "Count - Count number of records",
+                "median": "Median - Calculate median of values"
+            }[x]
+        )
+        
+        st.markdown("**📅 Time Frequency Settings**")
+        
+        # Time frequency configuration
+        col_freq_num, col_freq_unit = st.columns([1, 2])
+        
+        with col_freq_num:
+            freq_multiplier = st.number_input(
+                "Every:",
+                min_value=1,
+                max_value=1000,
+                value=1,
+                step=1,
+                key=f"freq_multiplier_{agg_counter}",
+                help="Number of time units (e.g., 2 for 'every 2 hours')"
+            )
+        
+        with col_freq_unit:
+            freq_unit = st.selectbox(
+                "Time Unit:", 
+                ["min", "H", "D", "W", "M", "Q"],
+                format_func=lambda x: {
+                    "min": "Minute(s)", 
+                    "H": "Hour(s)",
+                    "D": "Day(s)", 
+                    "W": "Week(s)", 
+                    "M": "Month(s)", 
+                    "Q": "Quarter(s)"
+                }[x],
+                key=f"freq_unit_{agg_counter}",
+                help="Choose the time unit for aggregation"
+            )
+    
+    # Combine multiplier and unit to create pandas frequency string
+    freq = f"{freq_multiplier}{freq_unit}"
+    
+    # Display the resulting configuration in a highlighted summary box
+    freq_display = {
+        "min": "minute(s)", 
+        "H": "hour(s)",
+        "D": "day(s)", 
+        "W": "week(s)", 
+        "M": "month(s)", 
+        "Q": "quarter(s)"
+    }[freq_unit]
+    
+    with st.container():
+        st.markdown(f"""
+        <div style="background-color: #e8f4fd; padding: 15px; border-radius: 8px; border-left: 4px solid #1f77b4; margin: 10px 0;">
+            <h4 style="margin: 0 0 10px 0; color: #1f77b4;">📋 Aggregation Summary</h4>
+            <strong>Method:</strong> {agg_method.title()}<br>
+            <strong>Frequency:</strong> Every {freq_multiplier} {freq_display}<br>
+            <strong>Date Column:</strong> {datetime_col}<br>
+            <strong>Value Column:</strong> {value_col}<br>
+            <strong>Categories:</strong> {'Yes (' + category_col + ')' if category_col else 'No'}<br>
+            <strong>Filters:</strong> {len(category_filters) if category_filters else 0} applied
+        </div>
+        """, unsafe_allow_html=True)
+    
+    # Show additional helpful info based on frequency selection
+    if freq_unit in ["min", "H"] and freq_multiplier <= 5:
+        st.info("ℹ️ High-frequency aggregation selected. Ensure your data has sufficient time granularity.")
+    elif freq_unit == "M" and freq_multiplier >= 6:
+        st.info("ℹ️ Long-term aggregation selected. This will create fewer data points with broader time spans.")
     
     preprocessing_params = {
         'date_col': datetime_col,
         'value_col': value_col,
         'category_col': category_col,
-        'needs_agg': needs_agg,
+        'agg_method': agg_method,
+        'freq': freq,
         'category_filters': category_filters,
         'ready': True,
         'aggregated_data': None
     }
     
-    if needs_agg:
-        # Show current data context if filters applied
-        if category_filters:
-            filtered_df = _apply_category_filters(df, category_filters)
-            if filtered_df.empty:
-                st.error("❌ Category filters resulted in empty dataset. Please adjust your filters.")
-                return {'ready': False}
-            
-            with st.container():
-                st.info(f"📊 Aggregation will be applied to filtered data: {filtered_df.shape[0]:,} rows")
-        
-        # Aggregation configuration in clean, organized sections
-        with st.container():
-            st.markdown("**⚙️ Aggregation Configuration**")
-            
-            # Method selection
-            agg_method = st.selectbox(
-                "Aggregation Method:", 
-                ["sum", "mean", "count", "median"],
-                key=f"agg_method_{agg_counter}",
-                help="Choose how to combine multiple values in the same time period",
-                format_func=lambda x: {
-                    "sum": "Sum - Add all values together",
-                    "mean": "Average - Calculate mean of values", 
-                    "count": "Count - Count number of records",
-                    "median": "Median - Calculate median of values"
-                }[x]
-            )
-            
-            st.markdown("**📅 Time Frequency Settings**")
-            
-            # Time frequency configuration
-            col_freq_num, col_freq_unit = st.columns([1, 2])
-            
-            with col_freq_num:
-                freq_multiplier = st.number_input(
-                    "Every:",
-                    min_value=1,
-                    max_value=1000,
-                    value=1,
-                    step=1,
-                    key=f"freq_multiplier_{agg_counter}",
-                    help="Number of time units (e.g., 2 for 'every 2 hours')"
-                )
-            
-            with col_freq_unit:
-                freq_unit = st.selectbox(
-                    "Time Unit:", 
-                    ["min", "H", "D", "W", "M", "Q"],
-                    format_func=lambda x: {
-                        "min": "Minute(s)", 
-                        "H": "Hour(s)",
-                        "D": "Day(s)", 
-                        "W": "Week(s)", 
-                        "M": "Month(s)", 
-                        "Q": "Quarter(s)"
-                    }[x],
-                    key=f"freq_unit_{agg_counter}",
-                    help="Choose the time unit for aggregation"
-                )
-        
-        # Combine multiplier and unit to create pandas frequency string
-        freq = f"{freq_multiplier}{freq_unit}"
-        
-        # Display the resulting configuration in a highlighted summary box
-        freq_display = {
-            "min": "minute(s)", 
-            "H": "hour(s)",
-            "D": "day(s)", 
-            "W": "week(s)", 
-            "M": "month(s)", 
-            "Q": "quarter(s)"
-        }[freq_unit]
-        
-        with st.container():
-            st.markdown(f"""
-            <div style="background-color: #e8f4fd; padding: 15px; border-radius: 8px; border-left: 4px solid #1f77b4; margin: 10px 0;">
-                <h4 style="margin: 0 0 10px 0; color: #1f77b4;">📋 Aggregation Summary</h4>
-                <strong>Method:</strong> {agg_method.title()}<br>
-                <strong>Frequency:</strong> Every {freq_multiplier} {freq_display}<br>
-                <strong>Categories:</strong> {'Yes (' + category_col + ')' if category_col else 'No'}<br>
-                <strong>Filters:</strong> {len(category_filters) if category_filters else 0} applied
-            </div>
-            """, unsafe_allow_html=True)
-        
-        # Show additional helpful info based on frequency selection
-        if freq_unit in ["min", "H"] and freq_multiplier <= 5:
-            st.info("ℹ️ High-frequency aggregation selected. Ensure your data has sufficient time granularity.")
-        elif freq_unit == "M" and freq_multiplier >= 6:
-            st.info("ℹ️ Long-term aggregation selected. This will create fewer data points with broader time spans.")
-        
-        preprocessing_params.update({
-            'agg_method': agg_method,
-            'freq': freq
-        })
-        
-        # Apply aggregation button section
-        st.markdown("---")
-        with st.container():
-            col_btn1, col_btn2, col_btn3 = st.columns([1, 2, 1])
-            with col_btn2:
-                if st.button("🚀 Apply Preprocessing", type="primary", key=f"aggregate_btn_{agg_counter}", use_container_width=True):
-                    aggregated_data = _handle_data_aggregation(preprocessing_params)
-                    if aggregated_data is not None:
-                        preprocessing_params['aggregated_data'] = aggregated_data
-                        return preprocessing_params
+    # Apply aggregation button section
+    st.markdown("---")
+    with st.container():
+        col_btn1, col_btn2, col_btn3 = st.columns([1, 2, 1])
+        with col_btn2:
+            if st.button("🚀 Apply Preprocessing", type="primary", key=f"aggregate_btn_{agg_counter}", use_container_width=True):
+                aggregated_data = _handle_data_aggregation(preprocessing_params)
+                if aggregated_data is not None:
+                    preprocessing_params['aggregated_data'] = aggregated_data
+                    
+                    # Add download option
+                    st.markdown("---")
+                    st.markdown("#### 📥 Download Processed Data")
+                    
+                    col_download1, col_download2, col_download3 = st.columns([1, 2, 1])
+                    with col_download2:
+                        # Convert dataframe to CSV
+                        csv_data = aggregated_data.to_csv(index=False)
+                        
+                        # Create filename with timestamp
+                        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                        filename = f"aggregated_data_{timestamp}.csv"
+                        
+                        st.download_button(
+                            label="📥 Download Aggregated Data",
+                            data=csv_data,
+                            file_name=filename,
+                            mime="text/csv",
+                            use_container_width=True,
+                            help="Download the processed and aggregated data as CSV file"
+                        )
+                        
+                        # Show file info
+                        st.success(f"✅ Ready to download: {aggregated_data.shape[0]:,} rows × {aggregated_data.shape[1]} columns")
+                    
+                    return preprocessing_params
     
     return preprocessing_params
 
 def _handle_customer_preprocessing(columns, agg_counter):
-    """Handle customer analytics preprocessing configuration"""
+    """Handle customer analytics preprocessing configuration"""  
     df = st.session_state.current_data
     
     # Step 1: Column Mapping (Required)
     st.markdown("#### 📊 Step 1: Column Mapping")
     st.markdown("Map your data columns to the required fields for customer analytics.")
+    
+    # Filter columns by data type
+    datetime_candidates = []
+    numeric_candidates = []
+    
+    for col in columns:
+        # Check for datetime or string columns (potential datetime)
+        if pd.api.types.is_datetime64_any_dtype(df[col]) or df[col].dtype == 'object':
+            # Additional check for string columns that might contain dates
+            if df[col].dtype == 'object':
+                sample_values = df[col].dropna().head(10).astype(str)
+                # Check if values look like dates
+                date_like = any(any(keyword in str(val).lower() for keyword in ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 
+                                                                               'jul', 'aug', 'sep', 'oct', 'nov', 'dec',
+                                                                               '2020', '2021', '2022', '2023', '2024', '2025',
+                                                                               '-', '/', ':']) for val in sample_values)
+                if date_like or any(keyword in col.lower() for keyword in ['date', 'time', 'day', 'month', 'year']):
+                    datetime_candidates.append(col)
+        
+        # Check for numeric columns
+        if pd.api.types.is_numeric_dtype(df[col]):
+            numeric_candidates.append(col)
+    
+    # All remaining columns can be customer ID (including string/object columns)
+    customer_candidates = [col for col in columns if col not in datetime_candidates or df[col].dtype == 'object']
+    
+    if not datetime_candidates:
+        st.error("❌ No suitable date/time columns found. Please ensure your data has datetime or string datetime columns.")
+        return {'ready': False}
+    
+    if not numeric_candidates:
+        st.error("❌ No suitable numeric columns found. Please ensure your data has numeric amount columns.")
+        return {'ready': False}
+    
+    if not customer_candidates:
+        st.error("❌ No suitable customer ID columns found.")
+        return {'ready': False}
     
     # Organized column selection layout
     col_map1, col_map2, col_map3 = st.columns(3)
@@ -497,25 +581,37 @@ def _handle_customer_preprocessing(columns, agg_counter):
     with col_map1:
         customer_col = st.selectbox(
             "👤 Customer ID Column:", 
-            columns,
+            customer_candidates,
             key=f"customer_col_{agg_counter}",
             help="Select the column containing customer identifiers"
         )
     
     with col_map2:
+        # Filter numeric columns to exclude selected customer column
+        available_amount_cols = [col for col in numeric_candidates if col != customer_col]
+        if not available_amount_cols:
+            st.error("❌ No numeric columns available for amount after selecting customer column.")
+            return {'ready': False}
+            
         amount_col = st.selectbox(
             "💰 Amount Column:", 
-            [col for col in columns if col != customer_col],
+            available_amount_cols,
             key=f"amount_col_{agg_counter}",
-            help="Select the column containing transaction amounts"
+            help="Select the numeric column containing transaction amounts"
         )
     
     with col_map3:
+        # Filter datetime columns to exclude selected columns
+        available_date_cols = [col for col in datetime_candidates if col not in [customer_col, amount_col]]
+        if not available_date_cols:
+            st.error("❌ No datetime columns available after selecting other columns.")
+            return {'ready': False}
+            
         date_col = st.selectbox(
             "📅 Date Column:", 
-            [col for col in columns if col not in [customer_col, amount_col]],
+            available_date_cols,
             key=f"date_col_customer_{agg_counter}",
-            help="Select the column containing transaction dates"
+            help="Select the column containing transaction dates (datetime or string format)"
         )
     
     # Column mapping summary
@@ -560,7 +656,8 @@ def _handle_data_aggregation(preprocessing_params):
             "value_col": preprocessing_params['value_col'],
             "agg_method": preprocessing_params['agg_method'],
             "freq": preprocessing_params['freq'],
-            "category_col": preprocessing_params['category_col']
+            "category_col": preprocessing_params['category_col'],
+            "keep_original_names": True  # Add flag to keep original column names
         }
         
         agg_data = APIClient.aggregate_data(payload)
@@ -573,6 +670,16 @@ def _handle_data_aggregation(preprocessing_params):
             # Update session state
             st.session_state.current_session_id = agg_data['session_id']
             new_data = pd.DataFrame(agg_data['data'])
+            
+            # Keep original column names instead of generic ones
+            # The API should return data with original names, but as fallback:
+            if 'date' in new_data.columns and preprocessing_params['date_col'] != 'date':
+                new_data = new_data.rename(columns={'date': preprocessing_params['date_col']})
+            if 'value' in new_data.columns and preprocessing_params['value_col'] != 'value':
+                new_data = new_data.rename(columns={'value': preprocessing_params['value_col']})
+            if 'category' in new_data.columns and preprocessing_params.get('category_col') and preprocessing_params['category_col'] != 'category':
+                new_data = new_data.rename(columns={'category': preprocessing_params['category_col']})
+            
             st.session_state.current_data = new_data
             
             # Set flags
