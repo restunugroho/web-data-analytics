@@ -6,7 +6,7 @@ import numpy as np
 import re
 from io import StringIO
 import json, logging, sys
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Callable
 from datetime import datetime, timedelta
 import warnings
 warnings.filterwarnings('ignore')
@@ -107,12 +107,14 @@ class AggregationRequest(BaseModel):
             raise ValueError(f'Aggregation method must be one of: {", ".join(valid_methods)}')
         return v
 
-# Sample datasets
+# Sample datasets with lazy loading - only store metadata and generator functions
 SAMPLE_DATASETS = {
     "ecommerce_sales": {
         "name": "E-commerce Sales Data",
         "description": "Daily sales data with customer segments and seasonal patterns",
-        "data": pd.DataFrame({
+        "columns": ['date', 'sales', 'orders', 'customers', 'category'],
+        "shape": (365, 5),
+        "generator": lambda: pd.DataFrame({
             'date': pd.date_range('2023-01-01', periods=365, freq='D'),
             'sales': np.random.normal(5000, 1500, 365).clip(0),
             'orders': np.random.poisson(50, 365),
@@ -123,7 +125,9 @@ SAMPLE_DATASETS = {
     "customer_transactions": {
         "name": "Customer Transaction History", 
         "description": "Individual customer purchase records with transaction details",
-        "data": pd.DataFrame({
+        "columns": ['customer_id', 'transaction_date', 'amount', 'product_category', 'quantity'],
+        "shape": (1000, 5),
+        "generator": lambda: pd.DataFrame({
             'customer_id': np.repeat(range(1, 101), 10),
             'transaction_date': pd.date_range('2023-01-01', periods=1000, freq='D')[:1000],
             'amount': np.random.exponential(100, 1000),
@@ -134,24 +138,46 @@ SAMPLE_DATASETS = {
     "manufacturing_production": {
         "name": "Manufacturing Production Data",
         "description": "Hourly production data with quality metrics and machine performance (DD/MM/YYYY HH:MM format)",
-        "data": DataGenerators.generate_manufacturing_data()
+        "columns": ['datetime', 'production_units', 'quality_score', 'machine_id', 'temperature', 'pressure', 'defect_rate', 'operator_id'],
+        "shape": (1000, 8),
+        "generator": lambda: DataGenerators.generate_manufacturing_data()
     },
     "financial_trading": {
         "name": "Financial Trading Data", 
         "description": "High-frequency trading data with multiple symbols and market metrics (YYYYMMDD format)",
-        "data": DataGenerators.generate_trading_data()
+        "columns": ['date', 'symbol', 'open', 'high', 'low', 'close', 'volume', 'market_cap'],
+        "shape": (500, 8),
+        "generator": lambda: DataGenerators.generate_trading_data()
     },
     "healthcare_admissions": {
         "name": "Healthcare Patient Admissions",
         "description": "Hospital patient admission records with department and cost data (MM-DD-YYYY format)", 
-        "data": DataGenerators.generate_healthcare_data()
+        "columns": ['admission_date', 'patient_id', 'department', 'age', 'gender', 'diagnosis', 'length_of_stay', 'total_cost'],
+        "shape": (800, 8),
+        "generator": lambda: DataGenerators.generate_healthcare_data()
     },
     "airline_flights": {
         "name": "Airline Flight Operations", 
         "description": "Daily flight data showing strong upward trend in passenger traffic with seasonal patterns (YYYY-MM-DD format)",
-        "data": DataGenerators.generate_flight_data()
+        "columns": ['date', 'passengers', 'flights', 'revenue', 'route', 'aircraft_type', 'delay_minutes', 'satisfaction_score'],
+        "shape": (365, 8),
+        "generator": lambda: DataGenerators.generate_flight_data()
     },
 }
+
+def load_sample_dataset(dataset_key: str) -> pd.DataFrame:
+    """Lazy load sample dataset only when requested"""
+    if dataset_key not in SAMPLE_DATASETS:
+        raise ValueError(f"Dataset {dataset_key} not found")
+    
+    try:
+        logging.info(f"Generating dataset: {dataset_key}")
+        dataset = SAMPLE_DATASETS[dataset_key]["generator"]()
+        logging.info(f"Dataset {dataset_key} generated successfully with shape {dataset.shape}")
+        return dataset
+    except Exception as e:
+        logging.error(f"Error generating dataset {dataset_key}: {str(e)}")
+        raise ValueError(f"Failed to generate dataset {dataset_key}: {str(e)}")
 
 # Basic Routes
 @app.get("/")
@@ -160,32 +186,43 @@ def read_root():
 
 @app.get("/sample-datasets")
 def get_sample_datasets():
+    """Get list of available sample datasets without loading them"""
     return {
         key: {
             "name": value["name"],
             "description": value["description"],
-            "shape": value["data"].shape,
-            "columns": value["data"].columns.tolist()
+            "shape": value["shape"],
+            "columns": value["columns"]
         }
         for key, value in SAMPLE_DATASETS.items()
     }
 
 # Data Management Routes
 @app.post("/load-sample/{dataset_key}")
-def load_sample_dataset(dataset_key: str):
+def load_sample_dataset_endpoint(dataset_key: str):
+    """Load a sample dataset on demand"""
     if dataset_key not in SAMPLE_DATASETS:
         raise HTTPException(status_code=404, detail="Dataset not found")
     
-    session_id = f"sample_{dataset_key}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    data_store[session_id] = SAMPLE_DATASETS[dataset_key]["data"].copy()
-    df = data_store[session_id]
-
-    return DataUploadResponse(
-        session_id=session_id,
-        columns=df.columns.tolist(),
-        shape=df.shape,
-        sample_data=df.to_dict('records')
-    )
+    try:
+        # Generate dataset only when requested
+        df = load_sample_dataset(dataset_key)
+        
+        session_id = f"sample_{dataset_key}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        data_store[session_id] = df
+        
+        logging.info(f"Loaded sample dataset {dataset_key} with session_id {session_id}")
+        
+        return DataUploadResponse(
+            session_id=session_id,
+            columns=df.columns.tolist(),
+            shape=df.shape,
+            sample_data=df.to_dict('records')  # Only return first 10 rows as sample
+        )
+    
+    except Exception as e:
+        logging.error(f"Error loading sample dataset {dataset_key}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error loading dataset: {str(e)}")
 
 @app.post("/upload-data")
 async def upload_data(file: UploadFile = File(...)):
@@ -213,7 +250,7 @@ async def upload_data(file: UploadFile = File(...)):
             session_id=session_id,
             columns=df.columns.tolist(),
             shape=df.shape,
-            sample_data=df.to_dict('records')
+            sample_data=df.to_dict('records')  # Only return first 10 rows as sample
         )
     
     except Exception as e:
@@ -309,6 +346,69 @@ def get_session_data(session_id: str, limit: int = 100):
         "columns": df.columns.tolist(),
         "shape": df.shape,
         "data": df.head(limit).to_dict('records')
+    }
+
+@app.get("/memory-usage")
+def get_memory_usage():
+    """Get current memory usage information"""
+    import psutil
+    import os
+    
+    process = psutil.Process(os.getpid())
+    memory_info = process.memory_info()
+    
+    return {
+        "active_sessions": len(data_store),
+        "memory_usage_mb": round(memory_info.rss / 1024 / 1024, 2),
+        "memory_usage_percent": round(process.memory_percent(), 2),
+        "session_list": list(data_store.keys())
+    }
+
+@app.delete("/session/{session_id}")
+def delete_session(session_id: str):
+    """Delete a session to free up memory"""
+    if session_id not in data_store:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    del data_store[session_id]
+    
+    # Also clean up any related cached analysis
+    keys_to_delete = [key for key in analysis_cache.keys() if key.startswith(session_id)]
+    for key in keys_to_delete:
+        del analysis_cache[key]
+    
+    return {"message": f"Session {session_id} deleted successfully"}
+
+@app.post("/cleanup-old-sessions")
+def cleanup_old_sessions(max_age_hours: int = 24):
+    """Clean up sessions older than specified hours"""
+    current_time = datetime.now()
+    deleted_sessions = []
+    
+    for session_id in list(data_store.keys()):
+        # Extract timestamp from session_id
+        try:
+            if '_' in session_id:
+                timestamp_str = session_id.split('_')[-1]
+                if len(timestamp_str) == 13:  # Format: YYYYMMDD_HHMMSS
+                    session_time = datetime.strptime(timestamp_str, '%Y%m%d_%H%M%S')
+                    age_hours = (current_time - session_time).total_seconds() / 3600
+                    
+                    if age_hours > max_age_hours:
+                        del data_store[session_id]
+                        deleted_sessions.append(session_id)
+                        
+                        # Clean up related cache
+                        keys_to_delete = [key for key in analysis_cache.keys() if key.startswith(session_id)]
+                        for key in keys_to_delete:
+                            del analysis_cache[key]
+        except:
+            continue
+    
+    return {
+        "deleted_sessions": deleted_sessions,
+        "deleted_count": len(deleted_sessions),
+        "remaining_sessions": len(data_store)
     }
 
 # Analysis Routes

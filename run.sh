@@ -64,7 +64,7 @@ wait_for_service() {
         fi
         
         echo "⏳ Attempt $attempt/$max_attempts: $service_name not ready yet..."
-        sleep 0.5
+        sleep 0.2
         attempt=$((attempt + 1))
     done
     

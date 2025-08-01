@@ -42,7 +42,6 @@ def _render_sample_data_section():
             <div class="info-box">
                 <strong>{datasets[dataset_key]['name']}</strong><br>
                 📝 {datasets[dataset_key]['description']}<br>
-                📏 Shape: {datasets[dataset_key]['shape']}<br>
                 📋 Columns: {', '.join(datasets[dataset_key]['columns'])}
             </div>
             """, unsafe_allow_html=True)
